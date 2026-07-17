@@ -1,0 +1,126 @@
+# Cardano x402 facilitator — deployment profiles (spec section 12).
+#
+#   light: postgres + facilitator (blockfrost mode by default; can also run
+#          yaci-store against a PUBLIC relay by setting CHAIN_MODE=yaci-store and
+#          the YACI_N2N_* vars on the `facilitator` service).
+#   full:  postgres + mithril-sync -> cardano-node (local relay + N2C socket) +
+#          facilitator-node (yaci-store mode indexing the local node).
+#
+# Bring up light:  docker compose --profile light up -d
+# Bring up full:   CARDANO_NETWORK=preprod docker compose --profile full up -d
+name: cardano-x402-facilitator
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    profiles: [light, full]
+    environment:
+      POSTGRES_DB: facilitator
+      POSTGRES_USER: facilitator
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-facilitator}
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U facilitator -d facilitator"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  # ---- light profile: blockfrost (or yaci-store against a public relay) --------
+  facilitator:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    profiles: [light]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB_URL: jdbc:postgresql://postgres:5432/facilitator
+      DB_USER: facilitator
+      DB_PASSWORD: ${DB_PASSWORD:-facilitator}
+      # Blockfrost mode (default). To run yaci-store light against a public relay,
+      # set CHAIN_MODE=yaci-store and the YACI_N2N_* vars below instead.
+      CHAIN_MODE: ${CHAIN_MODE:-blockfrost}
+      BLOCKFROST_PROJECT_ID: ${BLOCKFROST_PROJECT_ID:-}
+      CARDANO_NETWORK: ${CARDANO_NETWORK:-preprod}
+      # yaci-store-light knobs (public relay); ignored in blockfrost mode.
+      YACI_N2N_HOST: ${YACI_N2N_HOST:-}
+      YACI_N2N_PORT: ${YACI_N2N_PORT:-3001}
+      YACI_PROTOCOL_MAGIC: ${YACI_PROTOCOL_MAGIC:-1}
+    ports:
+      - "4022:4022"
+    restart: unless-stopped
+
+  # ---- full profile: Mithril bootstrap -> local cardano-node -> yaci-store ------
+  mithril-sync:
+    build:
+      context: ..
+      dockerfile: deploy/dockerfiles/mithril/Dockerfile
+    profiles: [full]
+    environment:
+      NETWORK: ${CARDANO_NETWORK:-preprod}
+      MITHRIL_SYNC: ${MITHRIL_SYNC:-true}
+    volumes:
+      - node-db:/node
+    restart: "no" # one-shot: downstream services gate on completion
+
+  cardano-node:
+    image: ghcr.io/intersectmbo/cardano-node:${CARDANO_NODE_VERSION:-10.4.1}
+    profiles: [full]
+    depends_on:
+      mithril-sync:
+        condition: service_completed_successfully
+    environment:
+      NETWORK: ${CARDANO_NETWORK:-preprod}
+      # Point the node's DB at the Mithril-restored snapshot volume.
+      CARDANO_DATABASE_PATH: /data/db
+      CARDANO_SOCKET_PATH: /ipc/node.socket
+    volumes:
+      - node-db:/data/db
+      - node-ipc:/ipc
+    ports:
+      - "${CARDANO_NODE_PORT:-3001}:3001" # N2N relay port (yaci-store sync source)
+    healthcheck:
+      # Socket present => node is up enough for N2C submission.
+      test: ["CMD-SHELL", "test -S /ipc/node.socket"]
+      interval: 15s
+      timeout: 5s
+      retries: 40
+      start_period: 120s
+    restart: unless-stopped
+
+  facilitator-node:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    profiles: [full]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      cardano-node:
+        condition: service_healthy
+    environment:
+      DB_URL: jdbc:postgresql://postgres:5432/facilitator
+      DB_USER: facilitator
+      DB_PASSWORD: ${DB_PASSWORD:-facilitator}
+      CHAIN_MODE: yaci-store
+      CARDANO_NETWORK: ${CARDANO_NETWORK:-preprod}
+      # yaci-store indexes the local node over N2N; submission uses the N2C socket.
+      YACI_N2N_HOST: cardano-node
+      YACI_N2N_PORT: "3001"
+      YACI_PROTOCOL_MAGIC: ${YACI_PROTOCOL_MAGIC:-1}
+      CARDANO_NODE_SOCKET: /ipc/node.socket
+    volumes:
+      - node-ipc:/ipc
+    ports:
+      - "4022:4022"
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  node-db:
+  node-ipc:

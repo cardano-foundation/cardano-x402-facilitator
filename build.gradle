@@ -1,0 +1,67 @@
+plugins {
+    id 'java'
+    id 'org.springframework.boot' version '3.5.16'
+    id 'io.spring.dependency-management' version '1.1.7'
+}
+
+group = 'org.cardanofoundation'
+version = '0.1.0'
+
+java { toolchain { languageVersion = JavaLanguageVersion.of(21) } }
+
+repositories { mavenCentral() }
+
+configurations.configureEach {
+    exclude group: 'org.springframework.boot', module: 'spring-boot-starter-logging'
+}
+
+ext {
+    yaciStoreVersion = '2.0.2'
+    // yaci-store 2.0.2 transitively pulls cardano-client-* 0.7.2; pin the whole
+    // cardano-client stack to that same version so the classpath stays coherent.
+    cardanoClientVersion = '0.7.2'
+}
+
+dependencies {
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+    implementation 'org.springframework.boot:spring-boot-starter-log4j2'
+    runtimeOnly 'org.apache.logging.log4j:log4j-layout-template-json'
+    implementation 'org.springframework.boot:spring-boot-starter-actuator'
+    implementation 'org.springframework.boot:spring-boot-starter-jdbc'
+    implementation 'org.springframework.boot:spring-boot-starter-validation'
+    implementation 'org.flywaydb:flyway-core'
+    implementation 'org.flywaydb:flyway-database-postgresql'
+    runtimeOnly 'org.postgresql:postgresql'
+    runtimeOnly 'com.h2database:h2'
+    implementation 'io.micrometer:micrometer-registry-prometheus'
+
+    implementation "com.bloxbean.cardano:cardano-client-lib:${cardanoClientVersion}"
+    implementation "com.bloxbean.cardano:cardano-client-backend-blockfrost:${cardanoClientVersion}"
+    // Aiken UPLC apply-params (JNI) for the `script` assetTransferMethod's S1
+    // address reconstruction; bundles native libs incl. darwin-aarch64.
+    implementation 'com.bloxbean.cardano:aiken-java-binding:0.1.0'
+
+    // yaci-store (self-hosted indexing) backend — the library modules, NOT the
+    // spring-boot-starter variants, so yaci-store's auto-configuration is NOT
+    // activated by classpath presence. It is imported explicitly only under the
+    // `yaci-store` Spring profile (YaciStoreConfiguration); the default
+    // (blockfrost) profile is completely unaffected. yaci (0.4.4) is the
+    // lower-level N2N/N2C protocol library used for era-correct tx submission.
+    implementation "com.bloxbean.cardano:yaci-store-core:${yaciStoreVersion}"
+    implementation "com.bloxbean.cardano:yaci-store-utxo:${yaciStoreVersion}"
+    implementation "com.bloxbean.cardano:yaci-store-epoch:${yaciStoreVersion}"
+    implementation "com.bloxbean.cardano:yaci:0.4.4"
+
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testImplementation 'org.testcontainers:postgresql'
+    testImplementation 'org.testcontainers:junit-jupiter'
+}
+
+tasks.named('test') { useJUnitPlatform() }
+
+tasks.register('e2e', JavaExec) {
+    group = 'verification'
+    description = 'Runs the preprod end-to-end proof (X402PreprodE2E main class)'
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'org.cardanofoundation.x402.facilitator.e2e.X402PreprodE2E'
+}

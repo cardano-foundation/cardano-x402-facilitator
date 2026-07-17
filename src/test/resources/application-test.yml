@@ -1,0 +1,34 @@
+spring:
+  datasource:
+    url: jdbc:h2:mem:test;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1
+    username: sa
+    password: ""
+    driver-class-name: org.h2.Driver
+  flyway:
+    enabled: false   # two programmatic runners in FlywayConfig (facilitator + store)
+
+x402:
+  networks:
+    - id: "cardano:preprod"
+      required: true
+      chain:
+        mode: blockfrost
+        blockfrost:
+          base-url: http://localhost:9999/api/v0
+          project-id: test-project-id
+  verification:
+    max-tx-bytes: 32768
+    script-datum-policy: strict
+  settle:
+    confirmation-timeout: 5s
+    confirmation-depth: 1
+    poll-interval: 100ms
+    accept-mempool: false
+    idempotent-replay: false
+    stability-window: 10m
+    reconcile-horizon: 24h
+    max-concurrent: 32
+  duplicate-cache:
+    ttl: 2s
+  http:
+    max-request-bytes: 65536

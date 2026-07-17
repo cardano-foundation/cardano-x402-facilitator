@@ -1,0 +1,56 @@
+server:
+  port: 4022
+
+spring:
+  # yaci-store's library modules pull spring-data-jpa transitively; keep Hibernate
+  # OFF in the default (blockfrost) profile so nothing changes for it. The
+  # `yaci-store` profile clears this list to re-enable JPA for the indexer.
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.orm.jpa.HibernateJpaAutoConfiguration
+      - org.springframework.boot.autoconfigure.data.jpa.JpaRepositoriesAutoConfiguration
+  threads:
+    virtual:
+      enabled: true
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/facilitator}
+    username: ${DB_USER:facilitator}
+    password: ${DB_PASSWORD:facilitator}
+  flyway:
+    enabled: false   # two programmatic runners in FlywayConfig (facilitator + store)
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
+x402:
+  networks:
+    - id: "cardano:preprod"
+      required: true
+      chain:
+        mode: blockfrost
+        blockfrost:
+          base-url: https://cardano-preprod.blockfrost.io/api/v0
+          project-id: ${BLOCKFROST_PROJECT_ID:}
+  verification:
+    max-tx-bytes: 32768
+    script-datum-policy: strict
+  settle:
+    confirmation-timeout: 180s
+    confirmation-depth: 1
+    poll-interval: 3s
+    accept-mempool: false
+    idempotent-replay: false
+    stability-window: 10m
+    reconcile-horizon: 24h
+    max-concurrent: 32
+  duplicate-cache:
+    ttl: 120s
+  http:
+    max-request-bytes: 65536
