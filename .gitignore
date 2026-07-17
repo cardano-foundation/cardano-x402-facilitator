@@ -1,0 +1,110 @@
+# ---------------------------------------------------------------------------
+# Secrets — keep first; this is the rule that actually matters here.
+# ---------------------------------------------------------------------------
+# `docker compose` auto-loads deploy/.env, which is where BLOCKFROST_PROJECT_ID
+# and DB_PASSWORD naturally end up. Never commit it.
+.env
+.env.*
+!.env.example
+
+# Local Spring overrides — the usual home for a real project id, an API key, or
+# an E2E mnemonic. The committed application*.yml files must stay credential-free
+# and read secrets from the environment instead.
+application-local.yml
+application-local.yaml
+application-local.properties
+application-secrets.yml
+application-secrets.yaml
+src/main/resources/application-local.*
+src/test/resources/application-local.*
+
+# Keys and certs, wherever they land.
+*.pem
+*.key
+*.p12
+*.jks
+*.keystore
+
+# ---------------------------------------------------------------------------
+# Gradle / build output
+# ---------------------------------------------------------------------------
+.gradle/
+build/
+gradle-app.setting
+.gradletasknamecache
+
+# The wrapper jar is tracked on purpose — without it ./gradlew cannot bootstrap,
+# so this negation guards against a future blanket *.jar rule.
+!gradle/wrapper/gradle-wrapper.jar
+
+# Local-only Gradle tuning. gradle.properties itself is tracked (it carries the
+# shared JVM/parallel settings the build expects).
+gradle-local.properties
+
+# ---------------------------------------------------------------------------
+# Java
+# ---------------------------------------------------------------------------
+*.class
+hs_err_pid*
+replay_pid*
+*.hprof
+
+# ---------------------------------------------------------------------------
+# Cardano / runtime artifacts
+# ---------------------------------------------------------------------------
+# Compose uses named volumes, so node state normally stays out of the repo —
+# these cover a hand-rolled bind mount or a locally-run node/devkit.
+node-db/
+node-ipc/
+db-sync/
+*.socket
+node.socket
+# Mithril snapshot restore scratch
+mithril-data/
+*.tar.zst
+
+# ---------------------------------------------------------------------------
+# Logs
+# ---------------------------------------------------------------------------
+*.log
+logs/
+log/
+
+# ---------------------------------------------------------------------------
+# IDEs
+# ---------------------------------------------------------------------------
+# IntelliJ
+.idea/
+*.iml
+*.ipr
+*.iws
+out/
+
+# Eclipse
+.classpath
+.project
+.settings/
+bin/
+
+# VS Code — keep shared launch/task config, drop personal settings
+.vscode/*
+!.vscode/launch.json
+!.vscode/tasks.json
+!.vscode/extensions.json
+
+# NetBeans
+nbproject/private/
+nbbuild/
+nbdist/
+
+# ---------------------------------------------------------------------------
+# OS
+# ---------------------------------------------------------------------------
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+ehthumbs.db
+desktop.ini
