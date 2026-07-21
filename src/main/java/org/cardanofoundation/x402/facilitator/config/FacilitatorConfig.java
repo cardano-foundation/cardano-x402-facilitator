@@ -10,6 +10,9 @@ import org.cardanofoundation.x402.facilitator.service.verification.ExactCardanoS
 import org.cardanofoundation.x402.facilitator.service.verification.decoder.CardanoTransactionDecoder;
 import org.cardanofoundation.x402.facilitator.service.verification.method.DefaultTransferVerifier;
 import org.cardanofoundation.x402.facilitator.service.verification.method.TransferMethodVerifier;
+import org.cardanofoundation.x402.facilitator.service.verification.method.masumi.MasumiTransferVerifier;
+import org.cardanofoundation.x402.facilitator.service.verification.method.script.ScriptTransferVerifier;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -35,7 +38,7 @@ public class FacilitatorConfig {
     }
 
     @Bean
-    public org.cardanofoundation.x402.facilitator.service.verification.method.masumi.MasumiTransferVerifier masumiTransferVerifier(
+    public MasumiTransferVerifier masumiTransferVerifier(
             X402Properties props, Map<String, ChainBackendFactory.ChainBackend> chainBackends) {
         // Per-network clocks (apply any slot-config override) for the M8 deadline.
         Map<String, org.cardanofoundation.x402.facilitator.chain.NetworkClock> clocks = new LinkedHashMap<>();
@@ -49,20 +52,20 @@ public class FacilitatorConfig {
                 allowed.put(org.cardanofoundation.x402.facilitator.service.registry.CardanoNetworks.normalize(network), set);
             });
         }
-        return new org.cardanofoundation.x402.facilitator.service.verification.method.masumi.MasumiTransferVerifier(
+        return new MasumiTransferVerifier(
                 clocks, allowed);
     }
 
     @Bean
-    public org.cardanofoundation.x402.facilitator.service.verification.method.script.ScriptTransferVerifier scriptTransferVerifier(X402Properties props) {
+    public ScriptTransferVerifier scriptTransferVerifier(X402Properties props) {
         boolean v3DatumOptional = props.verification() != null
                 && "v3-optional".equals(props.verification().scriptDatumPolicyOrDefault());
-        return new org.cardanofoundation.x402.facilitator.service.verification.method.script.ScriptTransferVerifier(v3DatumOptional);
+        return new ScriptTransferVerifier(v3DatumOptional);
     }
 
     @Bean
     public ChainBackendFactory chainBackendFactory(
-            org.springframework.beans.factory.ObjectProvider<YaciStoreBackendProvider> yaciStoreBackendProvider) {
+            ObjectProvider<YaciStoreBackendProvider> yaciStoreBackendProvider) {
         return new ChainBackendFactory(yaciStoreBackendProvider.getIfAvailable());
     }
 
