@@ -5,16 +5,17 @@ import java.math.BigInteger;
 
 /**
  * JS-semantics coercions for {@code extra} / parameter values, which arrive as
- * loosely-typed JSON scalars (String or Number). The TS reference uses
- * {@code BigInt(value)} and JS truthiness; these helpers reproduce both exactly
- * so a value that the reference accepts is not spuriously rejected here.
+ * loosely-typed JSON scalars (String or Number). Payment requirements are
+ * authored against JavaScript's {@code BigInt(value)} and truthiness rules,
+ * so these helpers reproduce both exactly to avoid spuriously rejecting a
+ * value that those semantics would accept.
  */
 public final class ExtraValues {
 
     /**
      * Mirrors JS {@code BigInt(value)}: an integer-valued Number converts, a
      * non-integer Number throws; an integer String converts, a non-integer
-     * String ("42.0") throws. Matches the reference for both encodings.
+     * String ("42.0") throws.
      */
     public static BigInteger toBigInteger(Object value) {
         if (value == null) throw new NumberFormatException("null");

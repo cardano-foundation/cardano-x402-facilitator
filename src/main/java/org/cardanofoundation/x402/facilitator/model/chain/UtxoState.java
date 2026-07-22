@@ -1,10 +1,10 @@
 package org.cardanofoundation.x402.facilitator.model.chain;
 
 /**
- * Tri-state UTxO answer (spec section 9.1): UNSPENT carries the owning address;
- * SPENT folds "spent" and "never existed" (the reference's live-UTxO-set
- * semantics); UNKNOWN is reserved for the yaci sync-horizon case and must never
- * be interpreted as a deterministic verdict under the default `fail` policy.
+ * Tri-state UTxO answer: UNSPENT carries the owning address; SPENT folds
+ * "spent" and "never existed" into one case (only the live UTxO set is
+ * consulted); UNKNOWN is reserved for indexer sync-lag and must never be
+ * interpreted as a deterministic verdict under the default `fail` policy.
  */
 public sealed interface UtxoState {
 

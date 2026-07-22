@@ -8,35 +8,40 @@ is the piece that answers two questions on the server's behalf — *is this paym
 valid?* and *did it actually settle?* — so the resource server needs no chain
 integration of its own.
 
-This service implements the Cardano `exact` scheme, wire-compatible with the
-[TypeScript reference](https://github.com/coinbase/x402/tree/main/typescript/packages/mechanisms/cardano).
+This service implements the Cardano `exact` scheme of the x402 protocol.
 
 **The facilitator never holds keys and never signs.** It verifies transactions
 the payer already signed, and submits them. It cannot move funds on its own.
 
 ## Status
 
-Implemented and unit-tested (144 tests, all green), proven end-to-end on
+Implemented and unit-tested (132 tests, all green), proven end-to-end on
 **preprod** with a real on-chain transaction. Nothing has run against mainnet —
 see the [mainnet checklist](deploy/README.md#mainnet-readiness-checklist) before
-you consider it. The yaci-store backend is compile- and unit-verified but its
-live sync path has not been exercised against a synced node.
+you consider it. Running against a standalone yaci-store reuses the same,
+on-chain-proven Blockfrost HTTP client, just pointed at a different
+`BLOCKFROST_BASE_URL`; running the full self-hosted stack
+(`deploy/docker-compose.yml`'s `full` profile) is not exercised in CI.
 
 ## Features
 
 - **All three x402 Cardano transfer methods** — `default` (address-to-address),
   `masumi` (`vested_pay` escrow, rules M1–M9), and `script` (arbitrary Plutus
   locks with aiken UPLC parameter application).
-- **Swappable chain backend** — Blockfrost, or a self-hosted yaci-store indexer
-  against your own cardano-node. Chosen per network; no hybrid.
+- **One Blockfrost-compatible chain client** — point it at hosted Blockfrost or
+  a standalone yaci-store instance (your own cardano-node + yaci-store,
+  consumed over its Blockfrost-compatible API) — chosen per network via
+  `BLOCKFROST_BASE_URL`, same code path either way.
 - **Settlement that survives reality** — journalled in Postgres, fenced CAS
   transitions, an asynchronous reconciler, and rollback detection. A tx that
   lands after the HTTP response, or a process that dies mid-submit, resolves
   correctly.
-- **Tri-state UTxO resolution** — `Unspent` / `Spent` / `Unknown`. An indexer
-  behind the tip returns a retryable error rather than a guess.
-- **Wire-identical error codes** with the TS reference, plus two additive codes
-  flagged for upstreaming.
+- **Tri-state UTxO resolution** — the chain SPI models `Unspent` / `Spent` /
+  `Unknown`, so a lagging indexer can degrade to a retryable error rather than a
+  guess. The current backend is Blockfrost-compatible and resolves an absent
+  output straight to `Spent`, whether it's hosted Blockfrost or yaci-store.
+- **A structured error-code catalog** covering every verification and
+  settlement failure mode.
 - Java 21, Spring Boot 3.5, virtual threads, Log4j2, Prometheus metrics.
 
 ## Quickstart
@@ -119,7 +124,6 @@ x402:
   networks:
     - id: "cardano:preprod"
       chain:
-        mode: blockfrost
         blockfrost:
           base-url: https://cardano-preprod.blockfrost.io/api/v0
           project-id: ${BLOCKFROST_PROJECT_ID}
@@ -139,27 +143,26 @@ unless you opt in. Full reference: [docs/configuration.md](docs/configuration.md
 | [docs/testing.md](docs/testing.md) | Unit suite and the on-chain E2E proof |
 | [deploy/README.md](deploy/README.md) | Docker Compose, Mithril sync, mainnet checklist |
 
-Design history: `docs/superpowers/specs/` (spec) and `docs/superpowers/plans/`
-(implementation plan). Those are how it was *designed*; the docs above describe
-what was *built*.
-
 ## Development
 
 ```bash
 export JAVA_HOME=/Library/Java/JavaVirtualMachines/temurin-21.jdk/Contents/Home
 
-./gradlew test        # 144 tests (Docker needed for the Postgres IT)
+./gradlew test        # 132 tests (Docker needed for the Postgres IT)
 ./gradlew bootRun     # run locally
 ./gradlew e2e         # on-chain proof; facilitator must be running
 ```
 
 Stack: Java 21 · Spring Boot 3.5.16 · cardano-client-lib 0.7.2 ·
-aiken-java-binding 0.1.0 · yaci-store 2.0.2 · PostgreSQL · Gradle 8.14.
+aiken-java-binding 0.1.0 · PostgreSQL · Gradle 8.14. yaci-store runs as a
+standalone service (`bloxbean/yaci-store:2.0.2` in `deploy/docker-compose.yml`),
+not a facilitator dependency.
 
-Before changing chain code, read the tri-state UTxO and yaci-store sections of
-[docs/architecture.md](docs/architecture.md) — several non-obvious behaviours
-there (spent rows retained deliberately, an era-hardcoding workaround, fail-open
-tip freshness) are load-bearing and easy to "simplify" into bugs.
+Before changing chain code, read the "Chain access layer" section of
+[docs/architecture.md](docs/architecture.md) — the tri-state `UtxoState` SPI
+contract, and how hosted Blockfrost and a standalone yaci-store both resolve to
+the same `BlockfrostChainService` HTTP client, are worth understanding before
+touching it.
 
 ## Security
 

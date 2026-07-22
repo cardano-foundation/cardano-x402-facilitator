@@ -8,8 +8,8 @@ import org.cardanofoundation.x402.facilitator.model.protocol.ProtocolJson;
 import org.cardanofoundation.x402.facilitator.model.protocol.SettleResponse;
 import org.cardanofoundation.x402.facilitator.model.chain.InclusionResult;
 import org.cardanofoundation.x402.facilitator.repository.SettlementRepository;
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.log4j.Log4j2;
 
 import javax.sql.DataSource;
 import java.sql.Connection;
@@ -22,15 +22,16 @@ import java.time.Instant;
 import java.util.Map;
 
 /**
- * Reconciler (spec section 8): sweeps SUBMITTING/SUBMITTED/NOT_CONFIRMED rows —
- * promote at depth, EXPIRE past the tx TTL (+margin) or, for TTL-less rows, past
- * the reconcile horizon — and re-checks recent CONFIRMED rows, demoting on
- * rollback. Lookup errors preserve state (error is never absence). Runs under a
- * Postgres advisory lock so only one instance sweeps at a time.
+ * Reconciler: sweeps SUBMITTING/SUBMITTED/NOT_CONFIRMED rows — promote at
+ * depth, EXPIRE past the tx TTL (+margin) or, for TTL-less rows, past the
+ * reconcile horizon — and re-checks recent CONFIRMED rows, demoting on
+ * rollback. Lookup errors preserve state (error is never absence). Runs under
+ * a Postgres advisory lock so only one instance sweeps at a time.
  */
+@Log4j2
+@RequiredArgsConstructor
 public class SettlementReconciler {
 
-    private static final Logger log = LogManager.getLogger(SettlementReconciler.class);
     private static final long ADVISORY_LOCK_KEY = 0x402_CA8DA_0L;
     private static final long TTL_SAFETY_MARGIN_SLOTS = 120;
 
@@ -42,21 +43,6 @@ public class SettlementReconciler {
     private final Duration reconcileHorizon;
     private final Clock clock;
     private final boolean postgres;
-
-    public SettlementReconciler(SettlementRepository repo,
-                                Map<String, FacilitatorChainService> chainByNetwork,
-                                DataSource dataSource, int confirmationDepth,
-                                Duration stabilityWindow, Duration reconcileHorizon,
-                                Clock clock, boolean postgres) {
-        this.repo = repo;
-        this.chainByNetwork = chainByNetwork;
-        this.dataSource = dataSource;
-        this.confirmationDepth = confirmationDepth;
-        this.stabilityWindow = stabilityWindow;
-        this.reconcileHorizon = reconcileHorizon;
-        this.clock = clock;
-        this.postgres = postgres;
-    }
 
     /**
      * Advisory locks are SESSION-scoped: the lock must be taken and released on

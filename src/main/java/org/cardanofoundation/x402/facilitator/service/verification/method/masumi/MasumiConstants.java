@@ -4,8 +4,7 @@ import java.math.BigInteger;
 
 /**
  * Masumi {@code vested_pay} (payment-v2 / {@code Web3CardanoV2}) constants and
- * the post-result min-UTXO estimator. Ported byte-for-byte from the TS reference
- * ({@code exact/masumi/constants.ts}). The estimator mirrors Masumi's own
+ * the post-result min-UTXO estimator. The estimator mirrors Masumi's own
  * {@code calculateMinUtxo}, sizing the escrow output for the datum as it will
  * look AFTER {@code SubmitResult} (32-byte {@code result_hash}, non-zero
  * cooldowns) so a lock this facilitator accepts also clears Masumi's off-chain
@@ -20,7 +19,7 @@ public final class MasumiConstants {
      */
     public static final BigInteger MASUMI_MIN_COLLATERAL_LOVELACE = BigInteger.valueOf(1_435_230L);
 
-    // Byte deltas / buffers mirroring the TS masumiMinUtxoLovelace estimator.
+    // Byte deltas / buffers used by the min-UTXO estimator below.
     /** CBOR byte delta of an empty vs 32-byte {@code result_hash} (0x40 -> 0x5820…). */
     private static final int RESULT_HASH_DELTA_BYTES = 33;
     /** Constant overhead (input + UTXO-map entry), same as the ledger's 160. */
@@ -36,8 +35,7 @@ public final class MasumiConstants {
 
     /**
      * Minimum lovelace the escrow output must carry, computed on the datum as it
-     * will look after {@code SubmitResult}. Mirrors the TS
-     * {@code masumiMinUtxoLovelace}.
+     * will look after {@code SubmitResult}.
      *
      * @param lockDatumBytes   byte length of the current (empty-result) lock datum
      * @param nativeTokenCount distinct native tokens on the escrow output

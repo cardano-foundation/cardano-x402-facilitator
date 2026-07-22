@@ -13,8 +13,8 @@ import org.springframework.web.filter.OncePerRequestFilter;
 import java.io.IOException;
 
 /**
- * Pre-deserialization request-size cap (spec section 13): fast-reject on
- * Content-Length, and bound chunked/streamed bodies with a byte-counting
+ * Pre-deserialization request-size cap: fast-reject on Content-Length, and
+ * bound chunked/streamed bodies with a byte-counting
  * stream that aborts with 413 the moment the limit is crossed — oversized
  * bodies never reach Jackson.
  */

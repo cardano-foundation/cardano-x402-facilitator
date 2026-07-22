@@ -8,7 +8,7 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 import java.util.List;
 
 /**
- * CORS policy (spec section 13). Default-deny: with no configured origins the
+ * CORS policy. Default-deny: with no configured origins the
  * facilitator sends no CORS headers, so browsers block cross-origin calls.
  * Operators opt specific origins in via {@code x402.http.cors-allowed-origins}.
  * The API is server-to-server by nature, so this stays closed unless asked.

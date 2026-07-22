@@ -1,7 +1,7 @@
 package org.cardanofoundation.x402.facilitator.model.chain;
 
 /**
- * Classified submission outcome (spec section 9.1) — never a bare exception.
+ * Classified submission outcome — never a bare exception.
  * ACCEPTED: the backend confirmed acceptance (node verdict, or N2N announcement).
  * REJECTED: definitive node/provider validation failure (never occurs on the
  * light N2N path, which carries no verdict).

@@ -123,7 +123,7 @@ class ExactCardanoVerifyTest {
         assertThat(r.invalidReason()).isEqualTo(ErrorCodes.NONCE_INVALID);
     }
 
-    // A5 — new spec checks (audit M2 + M4)
+    // A5 — requirement validation
 
     @Test
     void rejectsNonIntegerAmount() {
@@ -201,7 +201,7 @@ class ExactCardanoVerifyTest {
 
     @Test
     void rejectsTtlEqualToCurrentSlot() {
-        chain.currentSlot = 1_000_000L; // ttl == currentSlot is expired (strict boundary, TS parity)
+        chain.currentSlot = 1_000_000L; // ttl == currentSlot is expired (strict boundary)
         VerifyResponse r = verifyDefault();
         assertThat(r.invalidReason()).isEqualTo(ErrorCodes.TTL_EXPIRED);
     }
@@ -242,7 +242,8 @@ class ExactCardanoVerifyTest {
 
     @Test
     void rejectsSpentNonNonceInput() {
-        var extra = new com.bloxbean.cardano.client.transaction.spec.TransactionInput("ee".repeat(32), 2);
+        com.bloxbean.cardano.client.transaction.spec.TransactionInput extra =
+                new com.bloxbean.cardano.client.transaction.spec.TransactionInput("ee".repeat(32), 2);
         PaymentRequirements req = requirements("cardano:preprod", TestTx.PAY_TO, "2000000", "lovelace");
         String tx = TestTx.buildBase64(TestTx.Spec.defaults().withExtraInputs(List.of(extra)));
         // nonce exists, the extra input does NOT:
@@ -253,7 +254,7 @@ class ExactCardanoVerifyTest {
 
     @Test
     void unknownInputStateIsRetryableLookupFailureNotVerdict() {
-        chain.overrides.put(TestTx.NONCE, new UtxoState.Unknown()); // yaci sync-horizon case
+        chain.overrides.put(TestTx.NONCE, new UtxoState.Unknown()); // unknown state -> retryable chain_lookup_failed
         VerifyResponse r = verifyDefault();
         assertThat(r.invalidReason()).isEqualTo(ErrorCodes.CHAIN_LOOKUP_FAILED);
     }
@@ -267,7 +268,7 @@ class ExactCardanoVerifyTest {
 
     @Test
     void rejectsPayerWhoseKeyDidNotWitness() {
-        // nonce owned by the server address; the payer key that signed is different (D5, audit L2)
+        // nonce owned by the server address; the payer key that signed is different (D5)
         chain.unspent.put(TestTx.NONCE, TestTx.PAY_TO);
         VerifyResponse r = verifyDefault();
         assertThat(r.invalidReason()).isEqualTo(ErrorCodes.PAYER_NOT_WITNESS);
@@ -320,7 +321,7 @@ class ExactCardanoVerifyTest {
                 "2000000", TestTx.PAY_TO, 600, Map.of("assetTransferMethod", "script"));
         VerifyResponse r = scheme.verify(
                 payload(TestTx.buildBase64(TestTx.Spec.defaults()), TestTx.NONCE, req), req);
-        // "script" arrives in phase P5; until then unknown methods are unsupported_scheme (TS parity)
+        // this scheme registers no verifier for "script", so the method is unsupported_scheme
         assertThat(r.invalidReason()).isEqualTo(ErrorCodes.UNSUPPORTED_SCHEME);
     }
 }

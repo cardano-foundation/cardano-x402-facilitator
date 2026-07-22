@@ -56,8 +56,7 @@ public final class TestTx {
 
     // `script` assetTransferMethod conformance fixture: the shared MINIMAL_PLUTUS_V3
     // script (raw flat, single-CBOR-wrapped), its ledger script hash, and its
-    // enterprise (nid 0) script address — all derived from and cross-checked against
-    // the TS reference (@evolution-sdk scriptAddressFor / applyParamsToScript).
+    // enterprise (nid 0) script address — known-good vectors the S1 derivation must match.
     public static final String SCRIPT_CODE_V3 = "4d01000033222220051200120011";
     public static final String SCRIPT_HASH_V3 = "4fff649fb4372ec3c408b6f0468d74e4d319904cde27fd3f00910a52";
     public static final String SCRIPT_ADDR_V3 =

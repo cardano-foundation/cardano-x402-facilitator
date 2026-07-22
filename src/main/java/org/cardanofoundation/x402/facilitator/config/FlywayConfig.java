@@ -9,11 +9,10 @@ import javax.sql.DataSource;
 import java.sql.Connection;
 
 /**
- * Two-runner Flyway design (spec/plan): the facilitator's migrations always run
- * with their own history table in schema `facilitator`; yaci-store's migrations
- * (db/store/{vendor}, schema `store`, own history) are added by the yaci mode
- * (phase P6). Separate histories mean mode switches can never re-run or orphan
- * either side. Spring's single auto-run is disabled in application.yml.
+ * The facilitator's Flyway runner: its migrations run programmatically against
+ * their own history table in schema `facilitator` (Spring's single auto-run is
+ * disabled in application.yml). yaci-store, when used, runs as a separate service
+ * and owns its own schema/migrations entirely — nothing here touches it.
  */
 @Configuration
 public class FlywayConfig {
@@ -34,7 +33,7 @@ public class FlywayConfig {
         return new FlywayMigrationInitializer(facilitatorFlyway);
     }
 
-    /** Resolves Spring's {vendor} token for programmatic runners (P6 store migrations). */
+    /** Database vendor ({@code postgresql} / {@code h2}); used to gate the reconciler's advisory lock. */
     public static String vendor(DataSource dataSource) {
         try (Connection c = dataSource.getConnection()) {
             String product = c.getMetaData().getDatabaseProductName().toLowerCase();

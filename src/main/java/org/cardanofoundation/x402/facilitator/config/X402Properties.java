@@ -12,7 +12,6 @@ public record X402Properties(List<NetworkEntry> networks,
                              Settle settle,
                              DuplicateCache duplicateCache,
                              Http http,
-                             Chain chain,
                              Masumi masumi,
                              Security security) {
 
@@ -22,9 +21,14 @@ public record X402Properties(List<NetworkEntry> networks,
         }
     }
 
-    public record ChainConfig(String mode, Blockfrost blockfrost) {
+    public record ChainConfig(Blockfrost blockfrost) {
     }
 
+    /**
+     * The Blockfrost provider (cardano-client-lib {@code BFBackendService}). Point
+     * {@code baseUrl} at hosted Blockfrost <em>or</em> a standalone yaci-store's
+     * Blockfrost-compatible endpoint — the facilitator treats them identically.
+     */
     public record Blockfrost(String baseUrl, String projectId) {
     }
 
@@ -44,7 +48,7 @@ public record X402Properties(List<NetworkEntry> networks,
 
     public record Settle(Duration confirmationTimeout, Integer confirmationDepth, Duration pollInterval,
                          Boolean acceptMempool, Boolean idempotentReplay, Duration stabilityWindow,
-                         Duration reconcileHorizon, Integer maxConcurrent) {
+                         Duration reconcileHorizon) {
         public Duration confirmationTimeoutOrDefault() {
             return confirmationTimeout == null ? Duration.ofSeconds(180) : confirmationTimeout;
         }
@@ -72,10 +76,6 @@ public record X402Properties(List<NetworkEntry> networks,
         public Duration reconcileHorizonOrDefault() {
             return reconcileHorizon == null ? Duration.ofHours(24) : reconcileHorizon;
         }
-
-        public int maxConcurrentOrDefault() {
-            return maxConcurrent == null ? 32 : maxConcurrent;
-        }
     }
 
     public record DuplicateCache(Duration ttl) {
@@ -95,16 +95,13 @@ public record X402Properties(List<NetworkEntry> networks,
         }
     }
 
-    public record Chain(Integer tipFreshnessSlots, String utxoUnknownPolicy, String eraOverride) {
-    }
-
     /** Per-network ({@code cardano:preprod} etc.) allowed escrow script-hash hex list. */
     public record Masumi(Map<String, List<String>> allowedScriptHashes) {
     }
 
     /**
-     * Optional edge protections (spec section 13), all off by default so the
-     * facilitator stays open unless an operator opts in.
+     * Optional edge protections, all off by default so the facilitator stays
+     * open unless an operator opts in.
      */
     public record Security(List<String> apiKeys, RateLimit rateLimit) {
         public List<String> apiKeysOrDefault() {

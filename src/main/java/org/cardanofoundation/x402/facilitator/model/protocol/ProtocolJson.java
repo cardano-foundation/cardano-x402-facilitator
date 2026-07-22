@@ -4,7 +4,7 @@ import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
-/** Shared lenient mapper (mirrors TS tolerance + zod optionality) for non-Spring call sites. */
+/** Shared lenient mapper (tolerates unknown fields, treats fields as optional) for non-Spring call sites. */
 public final class ProtocolJson {
 
     private static final ObjectMapper MAPPER = new ObjectMapper()

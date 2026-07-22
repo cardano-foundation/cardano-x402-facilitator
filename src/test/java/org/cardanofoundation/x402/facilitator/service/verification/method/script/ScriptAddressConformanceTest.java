@@ -12,11 +12,9 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Cross-implementation conformance for the {@code script} method's S1 address
- * derivation. The expected hashes/address are ground truth extracted from the TS
- * reference (@evolution-sdk {@code applyParamsToScript}/{@code scriptAddressFor})
- * over the shared {@code MINIMAL_PLUTUS_V3} script, so the Java aiken-based
- * derivation and the reference produce IDENTICAL {@code payTo} values.
+ * Conformance for the {@code script} method's S1 address derivation: the aiken-based
+ * script-hash and address derivation must produce the expected {@code payTo} values
+ * for the shared {@code MINIMAL_PLUTUS_V3} script (known-good hash/address vectors).
  */
 class ScriptAddressConformanceTest {
 
@@ -94,7 +92,7 @@ class ScriptAddressConformanceTest {
 
     @Test void enumeratesParametersInJsObjectValuesOrder() {
         // Integer-like keys first in ascending numeric order, then string keys in
-        // insertion order (JS Object.values semantics; audit I2 / spec S1).
+        // insertion order (JS Object.values semantics).
         Map<String, Object> parameters = new LinkedHashMap<>();
         parameters.put("b", param("bigint", "10"));
         parameters.put("1", param("bigint", "20"));

@@ -3,10 +3,10 @@ package org.cardanofoundation.x402.facilitator.chain.blockfrost;
 import com.bloxbean.cardano.client.api.model.Result;
 import com.bloxbean.cardano.client.api.model.Utxo;
 import com.bloxbean.cardano.client.backend.api.BackendService;
-import com.bloxbean.cardano.client.backend.blockfrost.service.BFBackendService;
+import com.bloxbean.cardano.client.backend.model.Block;
 import com.bloxbean.cardano.client.backend.model.TransactionContent;
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.log4j.Log4j2;
 import org.cardanofoundation.x402.facilitator.chain.ChainLookupException;
 import org.cardanofoundation.x402.facilitator.chain.FacilitatorChainService;
 import org.cardanofoundation.x402.facilitator.model.chain.BackendHealth;
@@ -18,29 +18,20 @@ import java.time.Duration;
 import java.util.List;
 
 /**
- * Blockfrost backend: owns every chain capability for its network (spec 9.2).
+ * Blockfrost backend: owns every chain capability for its network.
  * "Unspent" = the outref is present in its owning address's live UTxO set
  * (Blockfrost address UTxOs are unspent-only). 404 on the outref itself folds
- * into Spent() — the reference's "not in live set" semantics; Unknown() never
+ * into Spent() — consistent with "not in live set" semantics; Unknown() never
  * occurs on this backend. Submission is era-agnostic (raw CBOR over HTTP).
  */
+@Log4j2
+@RequiredArgsConstructor
 public class BlockfrostChainService implements FacilitatorChainService {
-
-    private static final Logger log = LogManager.getLogger(BlockfrostChainService.class);
 
     private final BackendService backend;
     private final Duration pollInterval;
     private volatile long lastProbeMillis;
     private volatile boolean lastProbeOk;
-
-    public BlockfrostChainService(String baseUrl, String projectId, Duration pollInterval) {
-        this(new BFBackendService(baseUrl.endsWith("/") ? baseUrl : baseUrl + "/", projectId), pollInterval);
-    }
-
-    public BlockfrostChainService(BackendService backend, Duration pollInterval) {
-        this.backend = backend;
-        this.pollInterval = pollInterval;
-    }
 
     @Override
     public UtxoState getUtxoState(String txHashHex, int index) {
@@ -74,7 +65,7 @@ public class BlockfrostChainService implements FacilitatorChainService {
     @Override
     public long getCurrentSlot() {
         try {
-            var res = backend.getBlockService().getLatestBlock();
+            Result<Block> res = backend.getBlockService().getLatestBlock();
             if (!res.isSuccessful())
                 throw new ChainLookupException("Blockfrost latest block: " + res.getResponse());
             return res.getValue().getSlot();
@@ -110,7 +101,7 @@ public class BlockfrostChainService implements FacilitatorChainService {
                 throw new ChainLookupException("Blockfrost getTransaction failed: " + res.getResponse());
             }
             TransactionContent tx = res.getValue();
-            var latest = backend.getBlockService().getLatestBlock();
+            Result<Block> latest = backend.getBlockService().getLatestBlock();
             if (!latest.isSuccessful())
                 throw new ChainLookupException("Blockfrost latest block: " + latest.getResponse());
             long depth = latest.getValue().getHeight() - tx.getBlockHeight() + 1;

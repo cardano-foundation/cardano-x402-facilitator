@@ -22,6 +22,9 @@ import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 
+import java.sql.Connection;
+import java.sql.ResultSet;
+import java.sql.Statement;
 import java.time.Clock;
 import java.time.Duration;
 import java.util.HashMap;
@@ -136,18 +139,18 @@ class SettlementPostgresIT {
         // Advisory locks are SESSION-scoped: they only exclude while the acquiring
         // connection stays open (which is why the reconciler holds one dedicated
         // connection for the whole sweep).
-        try (var sessionA = ds().getConnection(); var sessionB = ds().getConnection();
-             var stA = sessionA.createStatement(); var stB = sessionB.createStatement()) {
-            try (var rs = stA.executeQuery("SELECT pg_try_advisory_lock(42)")) {
+        try (Connection sessionA = ds().getConnection(); Connection sessionB = ds().getConnection();
+             Statement stA = sessionA.createStatement(); Statement stB = sessionB.createStatement()) {
+            try (ResultSet rs = stA.executeQuery("SELECT pg_try_advisory_lock(42)")) {
                 rs.next();
                 assertThat(rs.getBoolean(1)).isTrue();
             }
-            try (var rs = stB.executeQuery("SELECT pg_try_advisory_lock(42)")) {
+            try (ResultSet rs = stB.executeQuery("SELECT pg_try_advisory_lock(42)")) {
                 rs.next();
                 assertThat(rs.getBoolean(1)).isFalse(); // excluded while session A holds it
             }
             stA.execute("SELECT pg_advisory_unlock(42)");
-            try (var rs = stB.executeQuery("SELECT pg_try_advisory_lock(42)")) {
+            try (ResultSet rs = stB.executeQuery("SELECT pg_try_advisory_lock(42)")) {
                 rs.next();
                 assertThat(rs.getBoolean(1)).isTrue(); // released -> B can take it
             }

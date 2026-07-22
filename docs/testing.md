@@ -21,7 +21,7 @@ export JAVA_HOME=/Library/Java/JavaVirtualMachines/temurin-21.jdk/Contents/Home
 JAVA_HOME=/Library/Java/JavaVirtualMachines/temurin-21.jdk/Contents/Home ./gradlew test
 ```
 
-144 tests, no network access, no credentials:
+132 tests, no network access, no credentials:
 
 | Area | Class | # |
 |---|---|---|
@@ -29,7 +29,6 @@ JAVA_HOME=/Library/Java/JavaVirtualMachines/temurin-21.jdk/Contents/Home ./gradl
 | Masumi M1–M9 | `MasumiTransferVerifierTest` | 24 |
 | Settlement | `ExactCardanoSettleTest` | 16 |
 | Script method | `ScriptTransferVerifierTest` | 12 |
-| yaci-store tri-state | `YaciStoreChainServiceTest` | 12 |
 | Script address conformance | `ScriptAddressConformanceTest` | 9 |
 | Controller | `FacilitatorControllerTest` | 6 |
 | Wire shapes | `ProtocolJsonTest` | 6 |
@@ -47,9 +46,9 @@ against a real backend on demand and are exactly where the dangerous bugs live.
 `TestTx` builds transaction fixtures.
 
 `ScriptAddressConformanceTest` pins aiken UPLC apply-params output byte-for-byte
-against vectors taken from the reference (evolution-sdk), for both empty and
-parametrized cases. If it fails after a dependency bump, the script method's
-address reconstruction has silently changed — do not "fix" the vectors.
+against known-good vectors, for both empty and parametrized cases. If it fails
+after a dependency bump, the script method's address reconstruction has
+silently changed — do not "fix" the vectors.
 
 `SettlementPostgresIT` uses Testcontainers, so **Docker must be running**. It
 exercises the CAS transitions against real Postgres; H2 won't catch the
@@ -98,11 +97,10 @@ Payer is the mnemonic's address index 0, receiver is index 1, so the wallet pays
 itself and only fees are consumed. Fund index 0 from the [preprod
 faucet](https://docs.cardano.org/cardano-testnets/tools/faucet).
 
-> **The committed defaults are throwaway preprod credentials.** They are testnet-only
-> and were coded as overridable defaults for a one-off exercise — a documented
-> deviation, not a pattern to copy. Never point this at mainnet, never commit a
-> funded mnemonic, and rotate these before any non-test use. Always pass
-> `E2E_MNEMONIC` / `BLOCKFROST_PROJECT_ID` explicitly.
+> **The committed defaults are throwaway preprod credentials.** They are
+> testnet-only, not a pattern to copy for any other use. Never point this at
+> mainnet, never commit a funded mnemonic, and rotate these before any
+> non-test use. Always pass `E2E_MNEMONIC` / `BLOCKFROST_PROJECT_ID` explicitly.
 
 ### Reading the result
 
@@ -133,9 +131,11 @@ flow without faucet funds or preprod latency.
 
 ## What isn't covered
 
-- **The yaci-store live path.** Compile- and unit-verified only; exercising it
-  needs a synced cardano-node, which CI doesn't have. Treat it as unproven
-  end-to-end until you've run it against a real node.
+- **The full self-hosted stack.** The `full` Compose profile (Mithril +
+  cardano-node + yaci-store) needs a live, synced node, which CI doesn't have,
+  so it isn't exercised end-to-end. The facilitator-side code path is the same
+  `BlockfrostChainService` already proven by the on-chain E2E test against
+  hosted Blockfrost — only the full stack's integration is unproven.
 - **Mainnet.** Nothing here has run against mainnet.
 
 ## Before committing
@@ -147,4 +147,4 @@ without it is worthless.
 JAVA_HOME=/Library/Java/JavaVirtualMachines/temurin-21.jdk/Contents/Home ./gradlew test
 ```
 
-Expect `BUILD SUCCESSFUL`, 144 tests, 0 failures.
+Expect `BUILD SUCCESSFUL`, 132 tests, 0 failures.

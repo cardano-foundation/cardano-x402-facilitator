@@ -25,23 +25,21 @@ import java.util.TreeMap;
 /**
  * Reconstructs the script payment-credential (script hash) implied by a script
  * {@code extra} block and checks it matches the script credential of {@code payTo}
- * (spec section 6, rule S1). Port of the TS reference's {@code scriptAddressMatches}
- * ({@code exact/facilitator/scriptAddress.ts}).
+ * (rule S1).
  *
  * <p>Apply-params is delegated to {@code aiken-java-binding}'s UPLC engine, which
  * returns the applied script as a single CBOR-bytestring-wrapped hex — the same
  * form evolution-sdk's {@code applyParamsToScript} unwraps to before hashing.
  * cardano-client-lib's {@code getScriptHash()} expects a DOUBLE-wrapped
  * {@code cborHex} (it strips one layer, then hashes {@code langTag || inner}), so
- * the applied hex is wrapped once more before construction. This wrapping is
- * pinned to the TS reference by {@code ScriptAddressConformanceTest} (empty-params
- * and parametrized vectors derived from the shared {@code MINIMAL_PLUTUS_V3}).
+ * the applied hex is wrapped once more before construction.
  *
- * <p><b>Parameter ordering:</b> the reference enumerates {@code Object.values(parameters)}
- * — JS semantics: integer-like keys first (ascending numeric), then the rest in
- * insertion order. Deriving a different address than the reference would break
- * every cross-implementation {@code payTo}, so that observed order is replicated
- * exactly (spec S1 / audit I2).
+ * <p><b>Parameter ordering:</b> parameters are enumerated in JS
+ * {@code Object.values(parameters)} order — integer-like keys first (ascending
+ * numeric), then the rest in insertion order — since clients constructing the
+ * {@code extra} block use that convention. Deriving a different address than the
+ * client expects would break {@code payTo} matching, so that order is replicated
+ * exactly.
  */
 public final class ScriptAddress {
 
@@ -146,7 +144,7 @@ public final class ScriptAddress {
         }
     }
 
-    /** Converts a typed script-parameter descriptor into Plutus data (mirrors TS toPlutusData). */
+    /** Converts a typed script-parameter descriptor into Plutus data. */
     private static PlutusData toPlutusData(Object paramObj) {
         if (!(paramObj instanceof Map<?, ?> param)) {
             throw new IllegalArgumentException("script parameter must be an object");
@@ -156,7 +154,7 @@ public final class ScriptAddress {
         return switch (type) {
             case "bytes" -> BytesPlutusData.of(HexUtil.decodeHexString(String.valueOf(value)));
             case "string" -> BytesPlutusData.of(String.valueOf(value).getBytes(StandardCharsets.UTF_8));
-            // BigInt(value) semantics — accepts integer Numbers and integer Strings (parity).
+            // BigInt(value) semantics — accepts integer Numbers and integer Strings.
             case "bigint", "integer" -> BigIntPlutusData.of(ExtraValues.toBigInteger(value));
             // JS truthiness: any non-empty string (incl. "false") / non-zero number is true.
             case "boolean" -> ConstrPlutusData.of(ExtraValues.jsTruthy(value) ? 1 : 0);

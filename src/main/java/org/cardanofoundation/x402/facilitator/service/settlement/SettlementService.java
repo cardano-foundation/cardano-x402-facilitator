@@ -16,25 +16,24 @@ import org.cardanofoundation.x402.facilitator.model.verification.DecodedTransact
 import org.cardanofoundation.x402.facilitator.repository.SettlementRepository;
 import org.cardanofoundation.x402.facilitator.service.verification.ExactCardanoScheme;
 import org.cardanofoundation.x402.facilitator.service.verification.decoder.CardanoTransactionDecoder;
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.log4j.Log4j2;
 
 import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.Duration;
-import java.time.Instant;
 import java.util.Base64;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 
 /**
- * The spec section-7 settlement pipeline. Owns journal, claim, submission and
- * inclusion; depends one-way on the scheme for re-verification (section 4.3).
+ * The settlement pipeline. Owns journal, claim, submission and inclusion;
+ * depends one-way on the scheme for re-verification.
  */
+@Log4j2
+@RequiredArgsConstructor
 public class SettlementService {
-
-    private static final Logger log = LogManager.getLogger(SettlementService.class);
 
     public record Config(Duration confirmationTimeout, int confirmationDepth, boolean acceptMempool,
                          boolean idempotentReplay, Duration stabilityWindow, Duration claimTtl) {
@@ -46,17 +45,6 @@ public class SettlementService {
     private final CardanoTransactionDecoder decoder;
     private final Config config;
     private final Clock clock;
-
-    public SettlementService(SettlementRepository repo, ExactCardanoScheme scheme,
-                             FacilitatorChainService chain, CardanoTransactionDecoder decoder,
-                             Config config, Clock clock) {
-        this.repo = repo;
-        this.scheme = scheme;
-        this.chain = chain;
-        this.decoder = decoder;
-        this.config = config;
-        this.clock = clock;
-    }
 
     public SettleResponse settle(PaymentPayload payload, PaymentRequirements requirements) {
         String network = payload.accepted() != null ? payload.accepted().network() : requirements.network();
@@ -129,8 +117,8 @@ public class SettlementService {
             }
         }
 
-        // accept-mempool fast path (blockfrost / yaci-full only — startup validation
-        // rejects the flag on the verdict-less light variant)
+        // accept-mempool fast path: treat node acceptance as settled without awaiting
+        // the confirmation depth (faster, less safe — opt-in).
         if (config.acceptMempool()) {
             return SettleResponse.ok(txHash, network, payer, "mempool");
         }
@@ -211,7 +199,7 @@ public class SettlementService {
         return null;
     }
 
-    /** Opt-in idempotent replay (spec 7.1): never check-free, never chain-blind. */
+    /** Opt-in idempotent replay: never check-free, never chain-blind. */
     private SettleResponse replay(SettlementRecord rec, PaymentPayload payload,
                                   PaymentRequirements requirements, String network) {
         VerifyResponse profile = scheme.verifyReplayProfile(payload, requirements,

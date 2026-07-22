@@ -13,7 +13,7 @@ class X402FacilitatorRegistryTest {
     };
 
     @Test void findsByVersionSchemeAndNormalizedNetwork() {
-        var reg = new X402FacilitatorRegistry();
+        X402FacilitatorRegistry reg = new X402FacilitatorRegistry();
         reg.register("cardano:preprod", exact);
         assertThat(reg.find(2, "exact", "cardano:preprod")).isPresent();
         assertThat(reg.find(2, "exact", "cip34:0-1")).isPresent();    // alias normalized
@@ -23,7 +23,7 @@ class X402FacilitatorRegistryTest {
     }
 
     @Test void supportedAdvertisesCanonicalKindAndEmptySigners() {
-        var reg = new X402FacilitatorRegistry();
+        X402FacilitatorRegistry reg = new X402FacilitatorRegistry();
         reg.register("cardano:preprod", exact);
         SupportedResponse s = reg.supported();
         assertThat(s.kinds()).containsExactly(new SupportedKind(2, "exact", "cardano:preprod"));

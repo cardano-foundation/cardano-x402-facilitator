@@ -16,8 +16,8 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * Optional edge protection for the mutating endpoints (spec section 13): an API
- * key allowlist and a per-key fixed-window rate limit. Both are off unless
+ * Optional edge protection for the mutating endpoints: an API key allowlist
+ * and a per-key fixed-window rate limit. Both are off unless
  * configured, so the default posture is unchanged. Guards {@code /verify} and
  * {@code /settle} only — {@code /supported}, {@code /health} and actuator stay
  * open for discovery and orchestration probes. Runs after the correlation filter

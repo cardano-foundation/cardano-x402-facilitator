@@ -9,10 +9,10 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 /**
- * Mirrors the TS stack's tolerance (NON_NULL out, unknown fields ignored in) and
- * bounds the JSON parser (spec section 13): a hostile body can otherwise force
- * deep nesting or gigantic scalars before the DTO is ever seen. These caps sit
- * under the {@link RequestSizeFilter} byte bound as defence in depth.
+ * Tolerant JSON mapping (NON_NULL out, unknown fields ignored in) with bounds on
+ * the JSON parser: a hostile body can otherwise force deep nesting or gigantic
+ * scalars before the DTO is ever seen. These caps sit under the
+ * {@link RequestSizeFilter} byte bound as defence in depth.
  */
 @Configuration
 public class JacksonConfig {

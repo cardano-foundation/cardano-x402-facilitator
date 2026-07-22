@@ -5,34 +5,32 @@ import org.cardanofoundation.x402.facilitator.model.protocol.PaymentRequirements
 import org.cardanofoundation.x402.facilitator.model.verification.DecodedTransaction;
 import org.cardanofoundation.x402.facilitator.service.verification.method.TransferMethodVerifier;
 
+import lombok.RequiredArgsConstructor;
+
 import java.math.BigInteger;
 import java.util.Map;
 import java.util.Optional;
 
 /**
- * The {@code script} assetTransferMethod verifier (spec section 6, rules S1-S3).
+ * The {@code script} assetTransferMethod verifier (rules S1-S3).
  *
  * <ul>
  *   <li><b>S1</b> — the reconstructed script hash (from {@code script}+parameters,
- *       or {@code scriptHash}) MUST equal {@code payTo}'s script credential. Port
- *       of the TS reference's {@code scriptAddressMatches}.</li>
+ *       or {@code scriptHash}) MUST equal {@code payTo}'s script credential.</li>
  *   <li><b>S2</b> — asset/amount/min-UTXO: enforced by the shared Stage E checks.</li>
- *   <li><b>S3</b> — Plutus-version- and datum-kind-aware datum policy (spec
- *       addition; the TS facilitator does not check the datum, which would strand
- *       funds locked to an unspendable output). PlutusV1 requires a datum HASH;
- *       PlutusV2 requires an inline datum or a datum hash; PlutusV3 allows a
- *       datum-less output only under {@code script-datum-policy: v3-optional};
- *       an unknown version ({@code scriptHash}-only) requires SOME datum. Datum
- *       <em>contents</em> are never validated (contract-specific).</li>
+ *   <li><b>S3</b> — Plutus-version- and datum-kind-aware datum policy: without it
+ *       a payment could lock funds to an output the seller's script can never
+ *       spend. PlutusV1 requires a datum HASH; PlutusV2 requires an inline datum
+ *       or a datum hash; PlutusV3 allows a datum-less output only under
+ *       {@code script-datum-policy: v3-optional}; an unknown version
+ *       ({@code scriptHash}-only) requires SOME datum. Datum <em>contents</em>
+ *       are never validated (contract-specific).</li>
  * </ul>
  */
+@RequiredArgsConstructor
 public class ScriptTransferVerifier implements TransferMethodVerifier {
 
     private final boolean v3DatumOptional;
-
-    public ScriptTransferVerifier(boolean v3DatumOptional) {
-        this.v3DatumOptional = v3DatumOptional;
-    }
 
     @Override
     public boolean supports(String method) {
@@ -79,8 +77,8 @@ public class ScriptTransferVerifier implements TransferMethodVerifier {
     /** First payTo output that satisfies the requested asset/amount (Stage E selection). */
     private static DecodedTransaction.Output lockedOutput(PaymentRequirements requirements, DecodedTransaction tx) {
         BigInteger amount = new BigInteger(requirements.amount());
-        String assetKey = requirements.asset() == null ? "" : requirements.asset().toLowerCase();
-        boolean isLovelace = "lovelace".equals(assetKey);
+        String assetKey = TransferMethodVerifier.assetKey(requirements);
+        boolean isLovelace = TransferMethodVerifier.isLovelace(assetKey);
         for (DecodedTransaction.Output o : tx.outputs()) {
             if (!o.address().equals(requirements.payTo())) continue;
             BigInteger available = isLovelace ? o.coin() : o.assets().get(assetKey);

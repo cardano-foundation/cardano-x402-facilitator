@@ -17,7 +17,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class ApiGuardFilterTest {
 
     static X402Properties props(List<String> keys, Integer rpm) {
-        return new X402Properties(null, null, null, null, null, null, null,
+        return new X402Properties(null, null, null, null, null, null,
                 new X402Properties.Security(keys, rpm == null ? null : new X402Properties.Security.RateLimit(rpm)));
     }
 

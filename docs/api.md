@@ -1,9 +1,7 @@
 # API Reference
 
 The facilitator implements the x402 v2 facilitator contract for the Cardano
-`exact` scheme. Wire shapes and error codes are a deliberate port of the
-TypeScript reference (`x402/typescript/packages/mechanisms/cardano`) — where this
-document and the reference disagree, the reference wins and it's a bug.
+`exact` scheme.
 
 Base URL in the examples: `http://localhost:4022`.
 
@@ -13,8 +11,7 @@ Set globally in `config/JacksonConfig`, and they apply to every endpoint:
 
 - **`null` fields are omitted** from responses (`NON_NULL` inclusion). A field
   documented as "null when …" is simply absent, not `"field": null`.
-- **Unknown request fields are ignored** rather than rejected, mirroring the
-  TS/zod tolerance.
+- **Unknown request fields are ignored** rather than rejected.
 - Parser bounds (defence in depth under the byte cap): max nesting depth 64, max
   string length 200 000, max number length 1 000.
 
@@ -158,9 +155,8 @@ Failed:
 | `network` | string | Always present; echoes the request |
 | `extra.status` | string | Settlement status when known |
 
-`transaction` and `network` are non-null by contract (matching the reference's
-Zod schema), so `transaction: ""` — not an absent field — is how "never
-submitted" is expressed.
+`transaction` and `network` are non-null by contract, so `transaction: ""` —
+not an absent field — is how "never submitted" is expressed.
 
 **`success: false` does not mean the money didn't move.** A
 `exact_cardano_settlement_not_confirmed` carrying a non-empty `transaction` means
@@ -226,15 +222,15 @@ Canonical ids, plus CIP-34 aliases that `normalize()` folds onto them:
 | `cardano:preprod` | `cip34:0-1` | 0 |
 | `cardano:preview` | `cip34:0-2` | 0 |
 
-Matching is **exact string equality** — no case folding, no trimming, because the
-TS `normalizeCardanoNetwork` does none. `CARDANO:PREPROD` is rejected.
+Matching is **exact string equality** — no case folding, no trimming.
+`CARDANO:PREPROD` is rejected.
 
 ---
 
 ## Error codes
 
-Every value below is wire-identical to the TS reference's `ERR_*` constants in
-`constants.ts`, except the two marked additive.
+Every value below is a stable code returned in `invalidReason` /
+`errorReason`, except the two noted below as extensions to the core set.
 
 ### Envelope / routing
 
@@ -253,7 +249,7 @@ Every value below is wire-identical to the TS reference's `ERR_*` constants in
 | `invalid_exact_cardano_payload_network_id_mismatch` | Tx network id ≠ requested network |
 | `invalid_exact_cardano_payload_unsigned` | No witnesses |
 | `invalid_exact_cardano_payload_invalid_signature` | Witness signature check failed |
-| `invalid_exact_cardano_payload_payer_not_witness` | **Additive.** Payer address did not sign |
+| `invalid_exact_cardano_payload_payer_not_witness` | Payer address did not sign |
 
 ### Validity window
 
@@ -309,12 +305,11 @@ Every value below is wire-identical to the TS reference's `ERR_*` constants in
 | Code | Meaning |
 |---|---|
 | `invalid_exact_cardano_payload_script_address_mismatch` | Reconstructed script address ≠ output |
-| `invalid_exact_cardano_payload_script_datum_missing` | **Additive.** Datum absent under the version's policy |
+| `invalid_exact_cardano_payload_script_datum_missing` | Datum absent under the version's policy |
 
-The two additive codes (`..._payer_not_witness`, `..._script_datum_missing`) close
-gaps the reference leaves open and are flagged for upstreaming (spec §16.3). A
-client written against the TS reference will not recognize them, so treat any
-unknown `invalid_exact_cardano_payload_*` as a generic rejection.
+Two codes — `..._payer_not_witness` and `..._script_datum_missing` — extend
+the core set to close payer-authorization and datum-presence gaps. Treat any
+unrecognized `invalid_exact_cardano_payload_*` code as a generic rejection.
 
 ---
 
@@ -330,12 +325,12 @@ These come from the framework/filters, not the scheme, and use an
 | `401` | Spring default error body | Missing/invalid `X-API-Key` (only when keys configured) |
 | `413` | **Two shapes — see below** | Over `x402.http.max-request-bytes` |
 | `429` | Spring default error body + `Retry-After: 60` | Over the rate limit (only when configured) |
-| `500` | `{"error": "No facilitator registered for scheme: …"}` | Unregistered (version, scheme, network) — TS parity |
+| `500` | `{"error": "No facilitator registered for scheme: …"}` | Unregistered (version, scheme, network) |
 | `500` | `{"error": "internal_error", "correlationId": "<uuid>"}` | Unhandled; detail is in the log under that id |
 
-An unregistered triple is a `500` on purpose: the reference's core
-`x402Facilitator` throws, and its facilitator surfaces that as a 500. It reads
-like a server bug and arguably should be a 4xx, but parity wins over taste here.
+An unregistered triple is a `500` on purpose. It reads like a server bug and
+arguably should be a 4xx, but the facilitator surfaces the failure as-is
+rather than translating it into a client error.
 
 Filters (`401`, `429`, and the pre-flight `413`) reject via `sendError`, which
 never reaches the `@RestControllerAdvice` — the container renders Spring Boot's

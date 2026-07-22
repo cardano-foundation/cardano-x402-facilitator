@@ -16,13 +16,15 @@ configurations.configureEach {
 }
 
 ext {
-    yaciStoreVersion = '2.0.2'
-    // yaci-store 2.0.2 transitively pulls cardano-client-* 0.7.2; pin the whole
-    // cardano-client stack to that same version so the classpath stays coherent.
     cardanoClientVersion = '0.7.2'
 }
 
 dependencies {
+    compileOnly 'org.projectlombok:lombok'
+    annotationProcessor 'org.projectlombok:lombok'
+    testCompileOnly 'org.projectlombok:lombok'
+    testAnnotationProcessor 'org.projectlombok:lombok'
+
     implementation 'org.springframework.boot:spring-boot-starter-web'
     implementation 'org.springframework.boot:spring-boot-starter-log4j2'
     runtimeOnly 'org.apache.logging.log4j:log4j-layout-template-json'
@@ -40,17 +42,8 @@ dependencies {
     // Aiken UPLC apply-params (JNI) for the `script` assetTransferMethod's S1
     // address reconstruction; bundles native libs incl. darwin-aarch64.
     implementation 'com.bloxbean.cardano:aiken-java-binding:0.1.0'
-
-    // yaci-store (self-hosted indexing) backend — the library modules, NOT the
-    // spring-boot-starter variants, so yaci-store's auto-configuration is NOT
-    // activated by classpath presence. It is imported explicitly only under the
-    // `yaci-store` Spring profile (YaciStoreConfiguration); the default
-    // (blockfrost) profile is completely unaffected. yaci (0.4.4) is the
-    // lower-level N2N/N2C protocol library used for era-correct tx submission.
-    implementation "com.bloxbean.cardano:yaci-store-core:${yaciStoreVersion}"
-    implementation "com.bloxbean.cardano:yaci-store-utxo:${yaciStoreVersion}"
-    implementation "com.bloxbean.cardano:yaci-store-epoch:${yaciStoreVersion}"
-    implementation "com.bloxbean.cardano:yaci:0.4.4"
+    // A standalone yaci-store is reached through the cardano-client blockfrost backend
+    // above (its Blockfrost-compatible API) — no separate dependency needed.
 
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     testImplementation 'org.testcontainers:postgresql'

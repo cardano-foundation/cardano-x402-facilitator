@@ -2,6 +2,7 @@ package org.cardanofoundation.x402.facilitator.service.verification;
 
 import com.bloxbean.cardano.client.address.Address;
 import com.bloxbean.cardano.client.address.AddressType;
+import com.bloxbean.cardano.client.address.Credential;
 import com.bloxbean.cardano.client.api.model.ProtocolParams;
 import com.bloxbean.cardano.client.common.MinAdaCalculator;
 import com.bloxbean.cardano.client.util.HexUtil;
@@ -18,6 +19,8 @@ import org.cardanofoundation.x402.facilitator.service.registry.CardanoNetworks;
 import org.cardanofoundation.x402.facilitator.service.verification.decoder.CardanoTransactionDecoder;
 import org.cardanofoundation.x402.facilitator.service.verification.method.TransferMethodVerifier;
 
+import lombok.RequiredArgsConstructor;
+
 import java.math.BigInteger;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -27,13 +30,11 @@ import java.util.Optional;
 import java.util.regex.Pattern;
 
 /**
- * The spec section-6 verification pipeline (Stages A-E). Port of the TS
- * reference's facilitator ExactCardanoScheme (exact/facilitator/scheme.ts) via
- * the demo's proven Java port, with the spec's additions: A5 requirement
- * validation (amount/asset/payTo network tag — audit M2/M4), C3 protocol
- * maxTxSize, D5 payer authorization (audit L2), tri-state UTxO handling.
- * Check order and error codes are wire-identical to the reference.
+ * The verification pipeline (Stages A-E): A5 requirement validation
+ * (amount/asset/payTo network tag), C3 protocol maxTxSize, D5 payer
+ * authorization, and tri-state UTxO handling.
  */
+@RequiredArgsConstructor
 public class ExactCardanoScheme {
 
     private static final Pattern NONCE_PATTERN = Pattern.compile("^[0-9a-fA-F]{64}#\\d+$");
@@ -45,16 +46,6 @@ public class ExactCardanoScheme {
     private final CardanoTransactionDecoder decoder;
     private final List<TransferMethodVerifier> methodVerifiers;
     private final int maxTxBytes;
-
-    public ExactCardanoScheme(FacilitatorChainService chain, ProtocolParamsProvider params,
-                              CardanoTransactionDecoder decoder,
-                              List<TransferMethodVerifier> methodVerifiers, int maxTxBytes) {
-        this.chain = chain;
-        this.params = params;
-        this.decoder = decoder;
-        this.methodVerifiers = methodVerifiers;
-        this.maxTxBytes = maxTxBytes;
-    }
 
     public VerifyResponse verify(PaymentPayload payload, PaymentRequirements requirements) {
         try {
@@ -83,7 +74,7 @@ public class ExactCardanoScheme {
                 return VerifyResponse.invalid(ErrorCodes.INVALID_PAYLOAD,
                         "transaction exceeds max-tx-bytes (" + maxTxBytes + ")", "");
 
-            // A5: requirement validation (audit M2 + M4)
+            // A5: requirement validation
             BigInteger requestedAmount;
             try {
                 requestedAmount = new BigInteger(requirements.amount());
@@ -147,9 +138,7 @@ public class ExactCardanoScheme {
                                 + pp.maxTxSize(), "");
 
             // Stage D — replay protection (chain UTxO set)
-            int sep = nonce.indexOf('#');
-            String nonceLower = nonce.substring(0, sep).toLowerCase()
-                    + "#" + Integer.parseInt(nonce.substring(sep + 1));
+            String nonceLower = normalizeNonce(nonce);
             if (!tx.inputs().contains(nonceLower))
                 return VerifyResponse.invalid(ErrorCodes.NONCE_NOT_IN_INPUTS, null, "");
 
@@ -163,8 +152,8 @@ public class ExactCardanoScheme {
             } catch (RuntimeException e) {
                 return VerifyResponse.invalid(ErrorCodes.CHAIN_LOOKUP_FAILED, e.getMessage(), "");
             }
-            // Unknown under the default fail policy = retryable lookup failure —
-            // never a deterministic verdict (spec 9.3; reject-stale maps it in P6).
+            // Unknown under the default fail policy is a retryable lookup failure —
+            // never a deterministic verdict.
             if (states.values().stream().anyMatch(s -> s instanceof UtxoState.Unknown))
                 return VerifyResponse.invalid(ErrorCodes.CHAIN_LOOKUP_FAILED,
                         "input state unknown (indexer sync horizon)", "");
@@ -175,53 +164,13 @@ public class ExactCardanoScheme {
             if (states.values().stream().anyMatch(s -> s instanceof UtxoState.Spent))
                 return VerifyResponse.invalid(ErrorCodes.INPUT_NOT_AVAILABLE, null, payer);
 
-            // D5 — payer authorization (audit L2; spec addition)
+            // D5 — payer authorization
             Optional<String> payerError = checkPayerAuthorization(payer, tx);
             if (payerError.isPresent())
                 return VerifyResponse.invalid(payerError.get(), null, payer);
 
             // Stage E — value transfer (rules 2/3/4/7) + method dispatch
-            boolean recipientFound = false, assetFound = false;
-            BigInteger bestAvailable = BigInteger.ZERO;
-
-            for (DecodedTransaction.Output out : tx.outputs()) {
-                if (!out.address().equals(requirements.payTo())) continue;
-                recipientFound = true;
-                BigInteger available = isLovelace ? out.coin() : out.assets().get(assetKey);
-                if (available == null) continue;
-                assetFound = true;
-                if (available.compareTo(bestAvailable) > 0) bestAvailable = available;
-                if (available.compareTo(requestedAmount) >= 0) {
-                    ProtocolParams cclParams = new ProtocolParams();
-                    cclParams.setCoinsPerUtxoSize(pp.coinsPerUtxoByte().toString());
-                    BigInteger minUtxo = new MinAdaCalculator(cclParams).calculateMinAda(out.raw());
-                    if (out.coin().compareTo(minUtxo) < 0)
-                        return VerifyResponse.invalid(ErrorCodes.MIN_UTXO_INSUFFICIENT,
-                                "output to " + requirements.payTo() + " carries " + out.coin()
-                                        + " lovelace, min-UTXO requires " + minUtxo, payer);
-
-                    // Method checks read CANONICAL requirements.extra (never accepted.extra).
-                    String method = requirements.extra() == null ? "default"
-                            : String.valueOf(requirements.extra().getOrDefault("assetTransferMethod", "default"));
-                    Optional<TransferMethodVerifier> verifier = methodVerifiers.stream()
-                            .filter(v -> v.supports(method)).findFirst();
-                    if (verifier.isEmpty())
-                        return VerifyResponse.invalid(ErrorCodes.UNSUPPORTED_SCHEME,
-                                "assetTransferMethod '" + method + "' is not supported by this facilitator", payer);
-                    Optional<String> methodError = verifier.get()
-                            .check(requirements.extra(), requirements, tx, payer, pp.coinsPerUtxoByte());
-                    if (methodError.isPresent())
-                        return VerifyResponse.invalid(methodError.get(), null, payer);
-
-                    return VerifyResponse.valid(payer);
-                }
-            }
-
-            if (!recipientFound) return VerifyResponse.invalid(ErrorCodes.RECIPIENT_MISMATCH, null, payer);
-            if (!assetFound) return VerifyResponse.invalid(ErrorCodes.ASSET_MISMATCH, null, payer);
-            return VerifyResponse.invalid(ErrorCodes.AMOUNT_INSUFFICIENT,
-                    "output to " + requirements.payTo() + " pays " + bestAvailable
-                            + ", requires " + requestedAmount, payer);
+            return checkValueTransfer(tx, requirements, isLovelace, assetKey, requestedAmount, pp, payer);
         } catch (ChainLookupException e) {
             return VerifyResponse.invalid(ErrorCodes.CHAIN_LOOKUP_FAILED, e.getMessage(), "");
         } catch (Exception e) {
@@ -230,9 +179,62 @@ public class ExactCardanoScheme {
     }
 
     /**
-     * Replay-safe profile (spec 7.1): the I/O-free mandatory checks only —
-     * Stages A+B plus D1 and D5 against the journaled payer. Used by the
-     * settlement service's opt-in idempotent replay; never touches the chain.
+     * Stage E: take the first output to {@code payTo} that fully covers the amount,
+     * enforce the min-UTXO floor on it, then run the per-method verifier. When no
+     * output qualifies, attribute the failure by how far the scan got
+     * (recipient -> asset -> amount).
+     */
+    private VerifyResponse checkValueTransfer(DecodedTransaction tx, PaymentRequirements requirements,
+                                              boolean isLovelace, String assetKey, BigInteger requestedAmount,
+                                              org.cardanofoundation.x402.facilitator.model.chain.ProtocolParams pp,
+                                              String payer) {
+        boolean recipientFound = false, assetFound = false;
+        BigInteger bestAvailable = BigInteger.ZERO;
+
+        for (DecodedTransaction.Output out : tx.outputs()) {
+            if (!out.address().equals(requirements.payTo())) continue;
+            recipientFound = true;
+            BigInteger available = isLovelace ? out.coin() : out.assets().get(assetKey);
+            if (available == null) continue;
+            assetFound = true;
+            if (available.compareTo(bestAvailable) > 0) bestAvailable = available;
+            if (available.compareTo(requestedAmount) >= 0) {
+                ProtocolParams cclParams = new ProtocolParams();
+                cclParams.setCoinsPerUtxoSize(pp.coinsPerUtxoByte().toString());
+                BigInteger minUtxo = new MinAdaCalculator(cclParams).calculateMinAda(out.raw());
+                if (out.coin().compareTo(minUtxo) < 0)
+                    return VerifyResponse.invalid(ErrorCodes.MIN_UTXO_INSUFFICIENT,
+                            "output to " + requirements.payTo() + " carries " + out.coin()
+                                    + " lovelace, min-UTXO requires " + minUtxo, payer);
+
+                // Method checks read CANONICAL requirements.extra (never accepted.extra).
+                String method = requirements.extra() == null ? "default"
+                        : String.valueOf(requirements.extra().getOrDefault("assetTransferMethod", "default"));
+                Optional<TransferMethodVerifier> verifier = methodVerifiers.stream()
+                        .filter(v -> v.supports(method)).findFirst();
+                if (verifier.isEmpty())
+                    return VerifyResponse.invalid(ErrorCodes.UNSUPPORTED_SCHEME,
+                            "assetTransferMethod '" + method + "' is not supported by this facilitator", payer);
+                Optional<String> methodError = verifier.get()
+                        .check(requirements.extra(), requirements, tx, payer, pp.coinsPerUtxoByte());
+                if (methodError.isPresent())
+                    return VerifyResponse.invalid(methodError.get(), null, payer);
+
+                return VerifyResponse.valid(payer);
+            }
+        }
+
+        if (!recipientFound) return VerifyResponse.invalid(ErrorCodes.RECIPIENT_MISMATCH, null, payer);
+        if (!assetFound) return VerifyResponse.invalid(ErrorCodes.ASSET_MISMATCH, null, payer);
+        return VerifyResponse.invalid(ErrorCodes.AMOUNT_INSUFFICIENT,
+                "output to " + requirements.payTo() + " pays " + bestAvailable
+                        + ", requires " + requestedAmount, payer);
+    }
+
+    /**
+     * Replay-safe profile: the I/O-free mandatory checks only — Stages A+B
+     * plus D1 and D5 against the journaled payer. Used by the settlement
+     * service's opt-in idempotent replay; never touches the chain.
      */
     public VerifyResponse verifyReplayProfile(PaymentPayload payload, PaymentRequirements requirements,
                                               String journaledNonce, String journaledPayer) {
@@ -261,9 +263,7 @@ public class ExactCardanoScheme {
                 return VerifyResponse.invalid(ErrorCodes.UNSIGNED, null, "");
             if (!tx.signaturesValid())
                 return VerifyResponse.invalid(ErrorCodes.INVALID_SIGNATURE, null, "");
-            int sep = nonce.indexOf('#');
-            String nonceLower = nonce.substring(0, sep).toLowerCase()
-                    + "#" + Integer.parseInt(nonce.substring(sep + 1));
+            String nonceLower = normalizeNonce(nonce);
             if (!tx.inputs().contains(nonceLower) || !nonceLower.equals(journaledNonce))
                 return VerifyResponse.invalid(ErrorCodes.NONCE_NOT_IN_INPUTS, null, "");
             Optional<String> payerError = checkPayerAuthorization(journaledPayer, tx);
@@ -290,7 +290,7 @@ public class ExactCardanoScheme {
         }
         if (address.getAddressType() == AddressType.Byron)
             return Optional.of(ErrorCodes.PAYER_NOT_WITNESS);
-        var credential = address.getPaymentCredential();
+        Optional<Credential> credential = address.getPaymentCredential();
         if (credential.isEmpty())
             return Optional.of(ErrorCodes.PAYER_NOT_WITNESS);
         return switch (credential.get().getType()) {
@@ -316,6 +316,12 @@ public class ExactCardanoScheme {
         } catch (RuntimeException e) {
             return false;
         }
+    }
+
+    /** Canonical "{@code <txHashLower>#<index>}" nonce: lowercase the hash, reparse the index. */
+    private static String normalizeNonce(String nonce) {
+        int sep = nonce.indexOf('#');
+        return nonce.substring(0, sep).toLowerCase() + "#" + Integer.parseInt(nonce.substring(sep + 1));
     }
 
     private static String str(Map<String, Object> map, String key) {

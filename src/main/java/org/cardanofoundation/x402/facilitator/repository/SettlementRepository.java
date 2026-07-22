@@ -1,5 +1,6 @@
 package org.cardanofoundation.x402.facilitator.repository;
 
+import lombok.RequiredArgsConstructor;
 import org.cardanofoundation.x402.facilitator.model.entity.SettlementRecord;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
@@ -17,11 +18,12 @@ import java.util.Optional;
 import java.util.UUID;
 
 /**
- * Journal DAO (spec section 8). Every transition is a fenced compare-and-set on
- * (tx_hash, attempt_id, expected_status) so a suspended worker resuming after
- * its claim was reclaimed can never overwrite the new attempt.
+ * Journal DAO. Every transition is a fenced compare-and-set on (tx_hash,
+ * attempt_id, expected_status) so a suspended worker resuming after its claim
+ * was reclaimed can never overwrite the new attempt.
  */
 @Repository
+@RequiredArgsConstructor
 public class SettlementRepository {
 
     private static final String COLS = """
@@ -30,10 +32,6 @@ public class SettlementRepository {
             confirmed_at, confirmed_slot, confirmed_block, error_reason, response_json""";
 
     private final NamedParameterJdbcTemplate jdbc;
-
-    public SettlementRepository(NamedParameterJdbcTemplate jdbc) {
-        this.jdbc = jdbc;
-    }
 
     public Optional<SettlementRecord> find(String txHash) {
         List<SettlementRecord> rows = jdbc.query(

@@ -8,8 +8,8 @@ import org.cardanofoundation.x402.facilitator.model.chain.UtxoState;
 import java.time.Duration;
 
 /**
- * Everything verify()/settle() needs from the Cardano chain (spec section 9.1).
- * One backend owns every capability for its network — no composite/failover.
+ * Everything verify()/settle() needs from the Cardano chain. One backend owns
+ * every capability for its network — no composite/failover.
  */
 public interface FacilitatorChainService {
 
@@ -19,10 +19,7 @@ public interface FacilitatorChainService {
     /** Throws ChainLookupException when the backing view is stale (fail-closed). */
     long getCurrentSlot();
 
-    /**
-     * Era resolution is backend-internal (blockfrost needs none; yaci resolves
-     * tip-bounded per submission). Returns a classified outcome, never throws.
-     */
+    /** Submits the raw signed tx; returns a classified outcome, never throws. */
     SubmissionResult submitTransaction(byte[] txBytes);
 
     /** One-shot. Throws ChainLookupException on lookup failure — error is never absence. */

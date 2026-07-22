@@ -3,8 +3,8 @@ package org.cardanofoundation.x402.facilitator.model.protocol;
 import java.util.Map;
 
 /**
- * transaction/network are ALWAYS non-null (Zod contract of the TS reference):
- * "" when nothing was submitted, the real tx hash whenever a submission happened.
+ * transaction/network are ALWAYS non-null: "" when nothing was submitted,
+ * the real tx hash whenever a submission happened.
  */
 public record SettleResponse(boolean success, String errorReason, String errorMessage,
                              String payer, String transaction, String network,

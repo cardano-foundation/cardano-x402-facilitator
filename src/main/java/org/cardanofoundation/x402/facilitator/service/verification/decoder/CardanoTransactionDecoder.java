@@ -12,7 +12,13 @@ import com.bloxbean.cardano.client.transaction.spec.TransactionWitnessSet;
 import com.bloxbean.cardano.client.transaction.spec.VkeyWitness;
 import com.bloxbean.cardano.client.transaction.util.TransactionUtil;
 import com.bloxbean.cardano.client.util.HexUtil;
+import co.nstant.in.cbor.CborDecoder;
+import co.nstant.in.cbor.model.Array;
+import co.nstant.in.cbor.model.ByteString;
+import co.nstant.in.cbor.model.DataItem;
+import co.nstant.in.cbor.model.UnsignedInteger;
 import org.cardanofoundation.x402.facilitator.model.verification.DecodedTransaction;
+import org.springframework.stereotype.Component;
 
 import java.math.BigInteger;
 import java.util.ArrayList;
@@ -25,11 +31,11 @@ import java.util.Set;
 
 /**
  * Decodes a base64 CBOR Cardano transaction into the view verify() needs.
- * Port of the TS reference's decodeCardanoTransaction (utils.ts) via the
- * demo's proven Java port. CORRECTNESS: the tx hash / signature message is
- * blake2b-256 over the RAW body bytes from the wire — TransactionUtil
- * extracts them without re-serialization.
+ * CORRECTNESS: the tx hash / signature message is blake2b-256 over the RAW
+ * body bytes from the wire — TransactionUtil extracts them without
+ * re-serialization.
  */
+@Component
 public class CardanoTransactionDecoder {
 
     public static class TransactionDecodeException extends RuntimeException {
@@ -79,8 +85,8 @@ public class CardanoTransactionDecoder {
         }
 
         // cardano-client-lib models ttl/validityStart as primitive longs (0 when
-        // absent), but a REAL `ttl: 0` must fail as expired (TS parity), so detect
-        // key presence in the raw body CBOR map: key 3 = ttl, key 8 = validity start.
+        // absent), but a REAL `ttl: 0` must fail as expired, so detect key
+        // presence in the raw body CBOR map: key 3 = ttl, key 8 = validity start.
         Set<Long> bodyKeys = topLevelBodyKeys(raw);
         Long ttl = bodyKeys.contains(3L) ? body.getTtl() : null;
         Long validityStart = bodyKeys.contains(8L) ? body.getValidityStartInterval() : null;
@@ -94,9 +100,9 @@ public class CardanoTransactionDecoder {
                 + size(ws.getPlutusV2Scripts()) + size(ws.getPlutusV3Scripts()) + size(ws.getRedeemers());
 
         // Every vkey witness must Ed25519-verify over the 32-byte body hash.
-        // Vacuously true with zero vkey witnesses (TS parity: .every() on []) —
-        // the scheme's UNSIGNED check handles the no-witness case separately.
-        // Bootstrap (Byron) witnesses are counted, not verified (TS parity).
+        // Vacuously true with zero vkey witnesses — the scheme's UNSIGNED check
+        // handles the no-witness case separately. Bootstrap (Byron) witnesses
+        // are counted, not verified.
         byte[] bodyHash = HexUtil.decodeHexString(txHashHex);
         boolean signaturesValid = true;
         Set<String> verifiedKeyHashes = new HashSet<>();
@@ -122,21 +128,19 @@ public class CardanoTransactionDecoder {
      * On-chain inline-datum byte lengths per output, in output order, read from
      * the raw transaction CBOR (post-Alonzo map-form outputs: key 1 = outputs,
      * each output map key 2 = datum_option {@code [1, #6.24(bstr .cbor datum)]}).
-     * The length is the wrapped datum's own byte count — the value the TS
-     * reference derives as {@code datumHex.length/2}. 0 when an output carries no
-     * inline datum (absent, a datum hash, or a legacy array-form output).
+     * The length is the wrapped datum's own byte count (equivalent to
+     * {@code datumHex.length/2}). 0 when an output carries no inline datum
+     * (absent, a datum hash, or a legacy array-form output).
      */
     private static int[] inlineDatumLengths(byte[] rawTx, int outputCount) {
         int[] lens = new int[outputCount];
         try {
             byte[] bodyBytes = TransactionUtil.extractTransactionBodyFromTx(rawTx);
-            co.nstant.in.cbor.model.DataItem bodyItem =
-                    co.nstant.in.cbor.CborDecoder.decode(bodyBytes).get(0);
+            DataItem bodyItem = CborDecoder.decode(bodyBytes).get(0);
             if (!(bodyItem instanceof co.nstant.in.cbor.model.Map body)) return lens;
-            co.nstant.in.cbor.model.DataItem outputsItem =
-                    body.get(new co.nstant.in.cbor.model.UnsignedInteger(1));
-            if (!(outputsItem instanceof co.nstant.in.cbor.model.Array outputs)) return lens;
-            List<co.nstant.in.cbor.model.DataItem> items = outputs.getDataItems();
+            DataItem outputsItem = body.get(new UnsignedInteger(1));
+            if (!(outputsItem instanceof Array outputs)) return lens;
+            List<DataItem> items = outputs.getDataItems();
             for (int i = 0; i < items.size() && i < lens.length; i++) {
                 lens[i] = inlineDatumLenOf(items.get(i));
             }
@@ -149,28 +153,26 @@ public class CardanoTransactionDecoder {
     }
 
     /** Inline-datum byte length of a single output DataItem, or 0 when absent. */
-    private static int inlineDatumLenOf(co.nstant.in.cbor.model.DataItem outputItem) {
+    private static int inlineDatumLenOf(DataItem outputItem) {
         if (!(outputItem instanceof co.nstant.in.cbor.model.Map outMap)) return 0; // legacy array form
-        co.nstant.in.cbor.model.DataItem datumOption =
-                outMap.get(new co.nstant.in.cbor.model.UnsignedInteger(2));
-        if (!(datumOption instanceof co.nstant.in.cbor.model.Array opt)) return 0;
-        List<co.nstant.in.cbor.model.DataItem> parts = opt.getDataItems();
-        if (parts.size() != 2 || !(parts.get(0) instanceof co.nstant.in.cbor.model.UnsignedInteger kind)
+        DataItem datumOption = outMap.get(new UnsignedInteger(2));
+        if (!(datumOption instanceof Array opt)) return 0;
+        List<DataItem> parts = opt.getDataItems();
+        if (parts.size() != 2 || !(parts.get(0) instanceof UnsignedInteger kind)
                 || kind.getValue().intValue() != 1) {
             return 0; // [0, datum_hash] => not an inline datum
         }
-        return parts.get(1) instanceof co.nstant.in.cbor.model.ByteString bs ? bs.getBytes().length : 0;
+        return parts.get(1) instanceof ByteString bs ? bs.getBytes().length : 0;
     }
 
     /** Integer keys present in the body map, read from the raw wire bytes. */
     private static Set<Long> topLevelBodyKeys(byte[] rawTx) {
         try {
             byte[] bodyBytes = TransactionUtil.extractTransactionBodyFromTx(rawTx);
-            co.nstant.in.cbor.model.DataItem item =
-                    co.nstant.in.cbor.CborDecoder.decode(bodyBytes).get(0);
+            DataItem item = CborDecoder.decode(bodyBytes).get(0);
             Set<Long> keys = new HashSet<>();
-            for (co.nstant.in.cbor.model.DataItem k : ((co.nstant.in.cbor.model.Map) item).getKeys()) {
-                if (k instanceof co.nstant.in.cbor.model.UnsignedInteger u) keys.add(u.getValue().longValue());
+            for (DataItem k : ((co.nstant.in.cbor.model.Map) item).getKeys()) {
+                if (k instanceof UnsignedInteger u) keys.add(u.getValue().longValue());
             }
             return keys;
         } catch (Exception e) {

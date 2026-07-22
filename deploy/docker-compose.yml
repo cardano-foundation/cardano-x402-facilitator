@@ -1,10 +1,12 @@
-# Cardano x402 facilitator — deployment profiles (spec section 12).
+# Cardano x402 facilitator — deployment profiles.
 #
-#   light: postgres + facilitator (blockfrost mode by default; can also run
-#          yaci-store against a PUBLIC relay by setting CHAIN_MODE=yaci-store and
-#          the YACI_N2N_* vars on the `facilitator` service).
-#   full:  postgres + mithril-sync -> cardano-node (local relay + N2C socket) +
-#          facilitator-node (yaci-store mode indexing the local node).
+#   light: postgres + facilitator (Blockfrost by default; point BLOCKFROST_BASE_URL
+#          at a standalone yaci-store's Blockfrost-compatible endpoint to use it).
+#   full:  postgres + mithril-sync -> cardano-node + yaci-store (standalone indexer
+#          exposing a Blockfrost-compatible API) + facilitator-node.
+#
+# The facilitator reaches the chain through the Blockfrost provider; a standalone
+# yaci-store is consumed the same way, via its Blockfrost-compatible API.
 #
 # Bring up light:  docker compose --profile light up -d
 # Bring up full:   CARDANO_NETWORK=preprod docker compose --profile full up -d
@@ -15,15 +17,15 @@ services:
     image: postgres:17-alpine
     profiles: [light, full]
     environment:
-      POSTGRES_DB: facilitator
-      POSTGRES_USER: facilitator
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-facilitator}
+      POSTGRES_DB: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
     ports:
       - "${DB_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U facilitator -d facilitator"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -39,18 +41,15 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      DB_URL: jdbc:postgresql://postgres:5432/facilitator
-      DB_USER: facilitator
-      DB_PASSWORD: ${DB_PASSWORD:-facilitator}
-      # Blockfrost mode (default). To run yaci-store light against a public relay,
-      # set CHAIN_MODE=yaci-store and the YACI_N2N_* vars below instead.
-      CHAIN_MODE: ${CHAIN_MODE:-blockfrost}
+      DB_URL: jdbc:postgresql://postgres:5432/postgres
+      DB_USER: postgres
+      DB_PASSWORD: ${DB_PASSWORD:-postgres}
+      # Blockfrost provider. Point BLOCKFROST_BASE_URL at hosted Blockfrost (default)
+      # or a standalone yaci-store's Blockfrost-compatible endpoint, e.g.
+      # http://my-yaci-store:8080/api/v1/blockfrost; project-id is ignored by yaci-store.
+      BLOCKFROST_BASE_URL: ${BLOCKFROST_BASE_URL:-https://cardano-preprod.blockfrost.io/api/v0}
       BLOCKFROST_PROJECT_ID: ${BLOCKFROST_PROJECT_ID:-}
       CARDANO_NETWORK: ${CARDANO_NETWORK:-preprod}
-      # yaci-store-light knobs (public relay); ignored in blockfrost mode.
-      YACI_N2N_HOST: ${YACI_N2N_HOST:-}
-      YACI_N2N_PORT: ${YACI_N2N_PORT:-3001}
-      YACI_PROTOCOL_MAGIC: ${YACI_PROTOCOL_MAGIC:-1}
     ports:
       - "4022:4022"
     restart: unless-stopped
@@ -81,11 +80,16 @@ services:
         condition: service_completed_successfully
     environment:
       NETWORK: ${CARDANO_NETWORK:-preprod}
-      # Point the node's DB at the Mithril-restored snapshot volume.
+      # `mithril-client cardano-db download --download-dir /node` restores the DB
+      # into a `db/` SUBDIRECTORY (/node/db), not the dir root. The node-db volume
+      # is mounted at /data here, so that snapshot lives at /data/db — which is
+      # exactly where the node's database path points. (Pointing at the volume
+      # root instead gives `NoDbMarkerAndNotEmpty`, since the root only holds the
+      # `db/` folder plus the mithril marker.)
       CARDANO_DATABASE_PATH: /data/db
       CARDANO_SOCKET_PATH: /ipc/node.socket
     volumes:
-      - node-db:/data/db
+      - node-db:/data
       - node-ipc:/ipc
     ports:
       - "${CARDANO_NODE_PORT:-3001}:3001" # N2N relay port (yaci-store sync source)
@@ -98,6 +102,41 @@ services:
       start_period: 120s
     restart: unless-stopped
 
+  # Standalone yaci-store: syncs from the local node (N2N), submits via its N2C
+  # socket, and exposes a Blockfrost-compatible API the facilitator consumes.
+  # Config uses Spring relaxed-binding env vars — see
+  # https://github.com/bloxbean/yaci-store/tree/main/docker for the full reference.
+  yaci-store:
+    image: bloxbean/yaci-store:${YACI_STORE_VERSION:-2.0.2}
+    profiles: [full]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      cardano-node:
+        condition: service_healthy
+    environment:
+      STORE_CARDANO_HOST: cardano-node                       # sync source (N2N)
+      STORE_CARDANO_PORT: "3001"
+      STORE_CARDANO_PROTOCOL_MAGIC: ${YACI_PROTOCOL_MAGIC:-1}
+      STORE_CARDANO_N2C_NODE_SOCKET_PATH: /ipc/node.socket   # submission (N2C)
+      # Start indexing from a recent intersect (slot + matching blockhash), not genesis.
+      STORE_CARDANO_SYNC_START_SLOT: ${SYNC_START_SLOT:-128935504}
+      STORE_CARDANO_SYNC_START_BLOCKHASH: ${SYNC_START_BLOCKHASH:-54f6b2f9647ec1f3a1466368b428c3246c05be848c006fe24e53f1b87bb35d6a}
+      # Shared Postgres instance, own schema (the facilitator uses the `facilitator` schema).
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/postgres?currentSchema=yaci_store
+      SPRING_DATASOURCE_USERNAME: ${DB_USER:-postgres}
+      SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD:-postgres}
+      # Expose the Blockfrost-compatible API that facilitator-node reaches via BLOCKFROST_BASE_URL below.
+      STORE_EXTENSIONS_BLOCKFROST_ENABLED: "true"
+      BLOCKFROST_APIPREFIX: /api/v1/blockfrost
+      STORE_PLUGINS_ENABLED: "false"                         # avoids the non-root sandbox mkdir
+    volumes:
+      - node-ipc:/ipc              # N2C submit socket
+      - yaci-store-data:/app/data
+    ports:
+      - "${YACI_STORE_PORT:-8080}:8080"
+    restart: unless-stopped
+
   facilitator-node:
     build:
       context: ..
@@ -106,21 +145,17 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      cardano-node:
-        condition: service_healthy
+      yaci-store:
+        condition: service_started
     environment:
-      DB_URL: jdbc:postgresql://postgres:5432/facilitator
-      DB_USER: facilitator
-      DB_PASSWORD: ${DB_PASSWORD:-facilitator}
-      CHAIN_MODE: yaci-store
+      DB_URL: jdbc:postgresql://postgres:5432/postgres
+      DB_USER: postgres
+      DB_PASSWORD: ${DB_PASSWORD:-postgres}
       CARDANO_NETWORK: ${CARDANO_NETWORK:-preprod}
-      # yaci-store indexes the local node over N2N; submission uses the N2C socket.
-      YACI_N2N_HOST: cardano-node
-      YACI_N2N_PORT: "3001"
-      YACI_PROTOCOL_MAGIC: ${YACI_PROTOCOL_MAGIC:-1}
-      CARDANO_NODE_SOCKET: /ipc/node.socket
-    volumes:
-      - node-ipc:/ipc
+      # Consume the standalone yaci-store via its Blockfrost-compatible API — the same
+      # blockfrost provider as hosted Blockfrost; project-id is ignored by yaci-store.
+      BLOCKFROST_BASE_URL: http://yaci-store:8080/api/v1/blockfrost
+      BLOCKFROST_PROJECT_ID: ""
     ports:
       - "4022:4022"
     restart: unless-stopped
@@ -129,3 +164,4 @@ volumes:
   pgdata:
   node-db:
   node-ipc:
+  yaci-store-data:

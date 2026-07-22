@@ -14,9 +14,8 @@ import java.util.List;
 
 /**
  * Codec + typed view for the Masumi {@code vested_pay} escrow lock datum
- * (payment-v2 / {@code Web3CardanoV2}). Port of the TS reference
- * ({@code exact/masumi/datum.ts}) restricted to the parse + credential helpers
- * the facilitator needs.
+ * (payment-v2 / {@code Web3CardanoV2}), restricted to the parse + credential
+ * helpers the facilitator needs.
  *
  * <p>All datum fields are compared STRUCTURALLY (credential-hash hex / BigInteger)
  * and never by datum-hex: Evolution (the frontend) emits indefinite-length CBOR
@@ -24,8 +23,7 @@ import java.util.List;
  * spuriously fail even for an identical datum.
  *
  * <p>{@link #parse} is total: it returns {@code null} whenever the structure does
- * not match the 19-field {@code Constr 0} datum (mirroring the TS
- * {@code parseMasumiLockDatum} contract).
+ * not match the expected 19-field {@code Constr 0} datum.
  */
 public final class MasumiDatum {
 
@@ -38,8 +36,8 @@ public final class MasumiDatum {
 
     /**
      * Address split into its payment credential plus its stake-hash-or-"".
-     * The stake credential's script-ness is intentionally NOT tracked: the TS
-     * {@code sameCredentials} compares only the stake hash (audit parity).
+     * The stake credential's script-ness is intentionally NOT tracked:
+     * {@link #sameCredentials} compares only the stake hash.
      */
     public record MasumiAddressCredentials(MasumiCredential payment, String stakeHash) {
     }

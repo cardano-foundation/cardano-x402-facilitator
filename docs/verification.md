@@ -85,7 +85,7 @@ closely.
     (`"input state unknown (indexer sync horizon)"`)
 19. The nonce UTxO is not `Unspent` → `..._nonce_not_on_chain`
 20. Any other input is `Spent` → `..._input_not_available`
-21. **D5** payer is not authorized → `..._payer_not_witness` *(additive code)*
+21. **D5** payer is not authorized → `..._payer_not_witness`
 
 **UTxO state is tri-state — `Unspent`, `Spent`, `Unknown` — and the third one
 carries the safety property.** An indexer that hasn't caught up cannot
@@ -194,27 +194,32 @@ asset. `!=`, not `>=`: escrow locks an exact figure.
 `inputHash`, `payByTime`, `submitResultTime`, `unlockTime`,
 `externalDisputeUnlockTime`, `collateralReturnLovelace`.
 
-*Checked even when undeclared:* `buyerReturnAddress` and `sellerReturnAddress`.
-These are **not** optional in the same sense. `returnAddressMatches` treats an
-omitted declaration as asserting the datum carries **no** return address:
+*Checked even when undeclared:* `sellerReturnAddress`. It is **not** optional in
+the same sense. `returnAddressMatches` treats an omitted declaration as asserting
+the datum carries **no** seller return address:
 
 ```java
 if (declared == null) return actual == null;   // omitted ⇒ datum must be None
 ```
 
-So omitting `buyerReturnAddress` while the datum sets one fails with
+So omitting `sellerReturnAddress` while the datum sets one fails with
 `..._masumi_datum_mismatch`. Omission is an assertion of absence, not a skip.
 
-For the genuinely optional fields, the declare-to-check design is inherited from
-the TS reference, where they are typed `string | undefined` — an undeclared field
-is not an assertion, so there is nothing to disagree with. Callers that want one
-enforced must declare it.
+*Never checked:* `buyerReturnAddress`. It is buyer-supplied — the 402 answers an
+unauthenticated request, so the resource server does not know the payer and
+cannot declare its refund address. The buyer is pinned by the `buyer == payer`
+assertion instead, so a declared `buyerReturnAddress` is ignored rather than
+matched.
+
+For the genuinely optional fields, an undeclared field is not an assertion, so
+there is nothing to disagree with. Callers that want one enforced must declare
+it.
 
 > **M1b is off unless you configure it.** With no allowlist, M1 only proves the
 > output went to the address the *requirements* named — a resource server naming
 > a hostile address still passes. Set
-> `x402.masumi.allowed-script-hashes.<network>` in production. This is the fix
-> for audit finding C1 and the reason it appears on the
+> `x402.masumi.allowed-script-hashes.<network>` in production. This is why it
+> appears on the
 > [mainnet checklist](../deploy/README.md#mainnet-readiness-checklist).
 
 ## `script` — arbitrary Plutus lock
@@ -223,12 +228,12 @@ enforced must declare it.
 |---|---|---|
 | S1 | `extra.scriptHash` or `extra.script` present, and the reconstructed script address ≡ `payTo` | `..._script_address_mismatch` |
 | S2 | Asset/amount/min-UTxO | *(shared Stage E)* |
-| S3 | Datum present per the Plutus version's policy | `..._script_datum_missing` *(additive)* |
+| S3 | Datum present per the Plutus version's policy | `..._script_datum_missing` |
 
 **S1** reconstructs the address rather than trusting `payTo`. When `parameters`
 are supplied, the script is applied via aiken's UPLC `apply_params` and hashed —
-byte-for-byte conformance-pinned against the reference for both empty and
-parametrized vectors (see `ScriptAddressConformanceTest`). Parameter types:
+verified byte-for-byte against known-good vectors for both empty and
+parametrized cases (see `ScriptAddressConformanceTest`). Parameter types:
 `bytes`, `string`, `bigint`, `integer`, `boolean`.
 
 **S3** varies by `extra.script.type`:
@@ -247,19 +252,16 @@ per-deployment only if you know your validator tolerates it.
 
 ---
 
-## Parity with the TypeScript reference
+## Error code notes
 
-Codes are wire-identical to `x402/typescript/packages/mechanisms/cardano/src/constants.ts`,
-with two additive codes (`..._payer_not_witness`, `..._script_datum_missing`)
-covering gaps the reference leaves open. Both are flagged for upstreaming
-(spec §16.3).
+Two codes exist beyond the core set — `..._payer_not_witness` and
+`..._script_datum_missing` — covering the payer-authorization and
+datum-presence checks described above.
 
-One deliberate, documented divergence: for input outside the reference's own
-declared type contract — an explicit JSON `null` on a field typed
-`string | undefined` — the two implementations reject differently. Java matches
-TS for every in-contract input. Chasing that last nuance would trade a
-skip-vs-reject difference for a mismatch-vs-invalid-payload error-code
-difference, at hot-path risk, for no behavioural gain.
+One deliberate, documented edge case: an explicit JSON `null` on a field that
+is otherwise optional is rejected rather than treated the same as an omitted
+field. An omitted field is silently skipped; an explicit `null` is not an
+equivalent input and fails with an invalid-payload error instead.
 
 Coverage lives in `ExactCardanoVerifyTest` (32), `MasumiTransferVerifierTest`
 (24), `ScriptTransferVerifierTest` (12), `ScriptAddressConformanceTest` (9), and

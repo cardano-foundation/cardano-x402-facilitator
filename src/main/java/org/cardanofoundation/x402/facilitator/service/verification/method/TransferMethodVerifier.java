@@ -9,7 +9,7 @@ import java.util.Optional;
 
 /**
  * Extension point for assetTransferMethod-specific checks (default/masumi/script).
- * Implementations are Spring beans, collected in list order (spec 6 Stage E).
+ * Implementations are Spring beans, collected in list order (Stage E).
  */
 public interface TransferMethodVerifier {
 
@@ -22,4 +22,14 @@ public interface TransferMethodVerifier {
      */
     Optional<String> check(Map<String, Object> extra, PaymentRequirements requirements,
                            DecodedTransaction tx, String payer, BigInteger coinsPerUtxoByte);
+
+    /** Canonical (lowercase) asset key of the requirement; {@code ""} for lovelace's absent asset. */
+    static String assetKey(PaymentRequirements requirements) {
+        return requirements.asset() == null ? "" : requirements.asset().toLowerCase();
+    }
+
+    /** True when the requirement's asset is lovelace (ADA), given its {@link #assetKey}. */
+    static boolean isLovelace(String assetKey) {
+        return "lovelace".equals(assetKey);
+    }
 }

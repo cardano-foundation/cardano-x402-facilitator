@@ -4,7 +4,7 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.UUID;
 
-/** One row of facilitator.settlement (spec section 8). */
+/** One row of facilitator.settlement. */
 public record SettlementRecord(
         String txHash,
         UUID attemptId,

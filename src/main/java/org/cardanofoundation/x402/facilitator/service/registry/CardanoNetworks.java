@@ -20,8 +20,8 @@ public final class CardanoNetworks {
     }
 
     public static String normalize(String network) {
-        // Exact alias-map lookup only — TS normalizeCardanoNetwork does no case or
-        // whitespace folding, and neither may we ("CARDANO:PREPROD" is rejected).
+        // Exact alias-map lookup only — no case or whitespace folding
+        // ("CARDANO:PREPROD" is rejected).
         if (network == null) return null;
         return CIP34_ALIASES.getOrDefault(network, network);
     }

@@ -1,7 +1,6 @@
 package org.cardanofoundation.x402.facilitator.controller.advice;
 
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
+import lombok.extern.log4j.Log4j2;
 import org.cardanofoundation.x402.facilitator.config.RequestSizeFilter;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -13,13 +12,12 @@ import java.util.Map;
 import java.util.UUID;
 
 /**
- * Sanitized error surface (spec section 13): 500 bodies never leak internals —
- * they carry a correlation id only; the full detail goes to the log.
+ * Sanitized error surface: 500 bodies never leak internals — they carry a
+ * correlation id only; the full detail goes to the log.
  */
 @RestControllerAdvice
+@Log4j2
 public class ApiErrorAdvice {
-
-    private static final Logger log = LogManager.getLogger(ApiErrorAdvice.class);
 
     @ExceptionHandler(HttpMessageNotReadableException.class)
     public ResponseEntity<Map<String, String>> onUnreadable(HttpMessageNotReadableException e) {

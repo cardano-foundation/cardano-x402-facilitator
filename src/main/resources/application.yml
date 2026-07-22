@@ -2,13 +2,6 @@ server:
   port: 4022
 
 spring:
-  # yaci-store's library modules pull spring-data-jpa transitively; keep Hibernate
-  # OFF in the default (blockfrost) profile so nothing changes for it. The
-  # `yaci-store` profile clears this list to re-enable JPA for the indexer.
-  autoconfigure:
-    exclude:
-      - org.springframework.boot.autoconfigure.orm.jpa.HibernateJpaAutoConfiguration
-      - org.springframework.boot.autoconfigure.data.jpa.JpaRepositoriesAutoConfiguration
   threads:
     virtual:
       enabled: true
@@ -17,7 +10,10 @@ spring:
     username: ${DB_USER:facilitator}
     password: ${DB_PASSWORD:facilitator}
   flyway:
-    enabled: false   # two programmatic runners in FlywayConfig (facilitator + store)
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/postgres}
+    user: ${DB_USER:postgres}
+    password: ${DB_PASSWORD:postgres}
+    schemas: ${DB_SCHEMA:facilitator}
 
 management:
   endpoints:
@@ -32,25 +28,12 @@ management:
 x402:
   networks:
     - id: "cardano:preprod"
-      required: true
       chain:
-        mode: blockfrost
         blockfrost:
-          base-url: https://cardano-preprod.blockfrost.io/api/v0
+          # Hosted Blockfrost, OR a standalone yaci-store's Blockfrost-compatible
+          # endpoint (e.g. http://yaci-store:8080/api/v1/blockfrost). project-id is
+          # required for hosted Blockfrost and ignored by yaci-store.
+          base-url: ${BLOCKFROST_BASE_URL:https://cardano-preprod.blockfrost.io/api/v0}
           project-id: ${BLOCKFROST_PROJECT_ID:}
-  verification:
-    max-tx-bytes: 32768
-    script-datum-policy: strict
-  settle:
-    confirmation-timeout: 180s
-    confirmation-depth: 1
-    poll-interval: 3s
-    accept-mempool: false
-    idempotent-replay: false
-    stability-window: 10m
-    reconcile-horizon: 24h
-    max-concurrent: 32
-  duplicate-cache:
-    ttl: 120s
-  http:
-    max-request-bytes: 65536
+  # x402.verification / settle / duplicate-cache / http are optional and default to
+  # sensible values in code — set them only to override. See docs/configuration.md.

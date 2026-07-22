@@ -5,14 +5,13 @@ spring:
     password: ""
     driver-class-name: org.h2.Driver
   flyway:
-    enabled: false   # two programmatic runners in FlywayConfig (facilitator + store)
+    enabled: false   # facilitator migrations run programmatically in FlywayConfig
 
 x402:
   networks:
     - id: "cardano:preprod"
       required: true
       chain:
-        mode: blockfrost
         blockfrost:
           base-url: http://localhost:9999/api/v0
           project-id: test-project-id
@@ -27,7 +26,6 @@ x402:
     idempotent-replay: false
     stability-window: 10m
     reconcile-horizon: 24h
-    max-concurrent: 32
   duplicate-cache:
     ttl: 2s
   http:

@@ -4,6 +4,7 @@ import org.cardanofoundation.x402.facilitator.model.ErrorCodes;
 import org.cardanofoundation.x402.facilitator.model.protocol.PaymentPayload;
 import org.cardanofoundation.x402.facilitator.model.protocol.PaymentRequirements;
 import org.cardanofoundation.x402.facilitator.model.protocol.VerifyResponse;
+import org.cardanofoundation.x402.facilitator.model.verification.DecodedTransaction;
 import org.cardanofoundation.x402.facilitator.service.verification.ExactCardanoScheme;
 import org.cardanofoundation.x402.facilitator.service.verification.decoder.CardanoTransactionDecoder;
 import org.cardanofoundation.x402.facilitator.service.verification.method.DefaultTransferVerifier;
@@ -23,8 +24,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * Full-verify coverage for {@link MasumiTransferVerifier} (the {@code masumi}
  * assetTransferMethod), driven through {@link ExactCardanoScheme} exactly like a
- * live request. Ports the demo's Masumi suite and adds the canonical TS rules the
- * demo lacked: reference-script rejection, non-zero cooldowns, the M8 deadline,
+ * live request: reference-script rejection, non-zero cooldowns, the M8 deadline,
  * collateral bounds, and return-address matching.
  */
 class MasumiTransferVerifierTest {
@@ -93,7 +93,7 @@ class MasumiTransferVerifierTest {
         // datumHex.length/2), not cardano-client-lib's re-serialization. Confirm the
         // decoder extracts it and it equals the datum the tx was actually built with.
         TestTx.MasumiSpec spec = TestTx.MasumiSpec.defaults();
-        var decoded = new CardanoTransactionDecoder().decode(
+        DecodedTransaction decoded = new CardanoTransactionDecoder().decode(
                 TestTx.buildMasumiLockBase64(TestTx.PAY_TO, spec));
         int expected = TestTx.buildMasumiDatum(spec).serializeToBytes().length;
         assertThat(decoded.outputs().get(0).inlineDatumRawLen()).isEqualTo(expected).isPositive();
@@ -203,12 +203,23 @@ class MasumiTransferVerifierTest {
                 defaultExtra()).invalidReason()).isEqualTo(ErrorCodes.MASUMI_DATUM_MISMATCH);
     }
 
-    @Test void rejectsReturnAddressMismatch() {
-        // Datum carries None for buyer_return_address, but extra declares one.
+    @Test void rejectsSellerReturnAddressMismatch() {
+        // seller_return_address is server-declared, so it must match exactly:
+        // the datum carries None while extra declares one.
         Map<String, Object> extra = defaultExtra();
-        extra.put("buyerReturnAddress", TestTx.SELLER_ADDRESS);
+        extra.put("sellerReturnAddress", TestTx.SELLER_ADDRESS);
         assertThat(verify(TestTx.MasumiSpec.defaults(), extra).invalidReason())
                 .isEqualTo(ErrorCodes.MASUMI_DATUM_MISMATCH);
+    }
+
+    @Test void doesNotMatchBuyerReturnAddress() {
+        // buyer_return_address is buyer-supplied: the 402 answers an unauthenticated
+        // request, so the server cannot know the payer's refund address. Declaring one
+        // that the datum does not carry must NOT reject — the buyer stays pinned by
+        // the buyer == payer rule instead.
+        Map<String, Object> extra = defaultExtra();
+        extra.put("buyerReturnAddress", TestTx.SELLER_ADDRESS);
+        assertThat(verify(TestTx.MasumiSpec.defaults(), extra).isValid()).isTrue();
     }
 
     @Test void rejectsHexFieldMismatch() {

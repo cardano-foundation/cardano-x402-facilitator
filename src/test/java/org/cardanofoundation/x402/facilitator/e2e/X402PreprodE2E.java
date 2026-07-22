@@ -2,14 +2,17 @@ package org.cardanofoundation.x402.facilitator.e2e;
 
 import com.bloxbean.cardano.client.account.Account;
 import com.bloxbean.cardano.client.api.model.Amount;
+import com.bloxbean.cardano.client.api.model.Result;
 import com.bloxbean.cardano.client.backend.api.BackendService;
 import com.bloxbean.cardano.client.backend.blockfrost.service.BFBackendService;
+import com.bloxbean.cardano.client.backend.model.TransactionContent;
 import com.bloxbean.cardano.client.common.model.Network;
 import com.bloxbean.cardano.client.common.model.Networks;
 import com.bloxbean.cardano.client.function.helper.SignerProviders;
 import com.bloxbean.cardano.client.quicktx.QuickTxBuilder;
 import com.bloxbean.cardano.client.quicktx.Tx;
 import com.bloxbean.cardano.client.transaction.spec.Transaction;
+import com.bloxbean.cardano.client.transaction.spec.TransactionInput;
 import com.bloxbean.cardano.client.transaction.util.TransactionUtil;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -72,7 +75,7 @@ public class X402PreprodE2E {
                 .buildAndSign();
         byte[] txBytes = signed.serialize();
         String txB64 = Base64.getEncoder().encodeToString(txBytes);
-        var in0 = signed.getBody().getInputs().get(0);
+        TransactionInput in0 = signed.getBody().getInputs().get(0);
         String nonce = in0.getTransactionId().toLowerCase() + "#" + in0.getIndex();
         String expectedHash = TransactionUtil.getTxHash(txBytes).toLowerCase();
         System.out.println("built tx " + expectedHash + " (nonce " + nonce + ", ttl slot " + ttl + ")");
@@ -121,7 +124,7 @@ public class X402PreprodE2E {
         long deadline = System.currentTimeMillis() + 300_000;
         String block = null;
         while (System.currentTimeMillis() < deadline) {
-            var onChain = backend.getTransactionService().getTransaction(expectedHash);
+            Result<TransactionContent> onChain = backend.getTransactionService().getTransaction(expectedHash);
             if (onChain.isSuccessful() && onChain.getValue().getBlock() != null) {
                 block = onChain.getValue().getBlock();
                 break;

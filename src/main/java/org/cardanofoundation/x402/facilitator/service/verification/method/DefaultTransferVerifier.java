@@ -2,12 +2,14 @@ package org.cardanofoundation.x402.facilitator.service.verification.method;
 
 import org.cardanofoundation.x402.facilitator.model.protocol.PaymentRequirements;
 import org.cardanofoundation.x402.facilitator.model.verification.DecodedTransaction;
+import org.springframework.stereotype.Component;
 
 import java.math.BigInteger;
 import java.util.Map;
 import java.util.Optional;
 
 /** Address-to-address needs nothing beyond the shared checks. */
+@Component
 public class DefaultTransferVerifier implements TransferMethodVerifier {
 
     @Override
