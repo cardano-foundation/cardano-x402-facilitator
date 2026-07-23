@@ -169,6 +169,19 @@ class MasumiTransferVerifierTest {
                 .isEqualTo(ErrorCodes.MASUMI_DATUM_INVALID);
     }
 
+    @Test void rejectsEscrowAsBuyerReturnAddress() {
+        // A return address pointing back at the escrow (TestTx.PAY_TO) bricks
+        // vested_pay's continuation-datum parsing on every spend path.
+        assertThat(verify(TestTx.MasumiSpec.defaults().withBuyerReturnAddress(TestTx.PAY_TO), defaultExtra())
+                .invalidReason()).isEqualTo(ErrorCodes.MASUMI_DATUM_INVALID);
+    }
+
+    @Test void rejectsEscrowAsSellerReturnAddress() {
+        // Runs before M7 field matching, so no extra.sellerReturnAddress declaration is needed.
+        assertThat(verify(TestTx.MasumiSpec.defaults().withSellerReturnAddress(TestTx.PAY_TO), defaultExtra())
+                .invalidReason()).isEqualTo(ErrorCodes.MASUMI_DATUM_INVALID);
+    }
+
     @Test void rejectsDeadlineNoTtl() {
         String tx = TestTx.buildMasumiLockBase64(TestTx.PAY_TO, TestTx.MasumiSpec.defaults(),
                 null, false, null);
@@ -230,5 +243,16 @@ class MasumiTransferVerifierTest {
     @Test void rejectsTimeFieldMismatch() {
         assertThat(verify(TestTx.MasumiSpec.defaults().withUnlockTime(new BigInteger("2000001300000")),
                 defaultExtra()).invalidReason()).isEqualTo(ErrorCodes.MASUMI_DATUM_MISMATCH);
+    }
+
+    @Test void crossImplementationMinUtxoFixture() {
+        // Cross-implementation fixture -- must stay in sync with
+        // typescript/packages/mechanisms/cardano/test/unit/masumiVerify.test.ts
+        // ("cross-implementation min-UTXO fixture"): a 367-byte Evolution-encoded
+        // 19-field lock datum at coinsPerUtxoByte=4310.
+        assertThat(MasumiConstants.masumiMinUtxoLovelace(367, 0, BigInteger.valueOf(4310)))
+                .isEqualTo(BigInteger.valueOf(3_124_750));
+        assertThat(MasumiConstants.masumiMinUtxoLovelace(367, 1, BigInteger.valueOf(4310)))
+                .isEqualTo(BigInteger.valueOf(3_340_250));
     }
 }

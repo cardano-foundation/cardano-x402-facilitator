@@ -236,19 +236,17 @@ verified byte-for-byte against known-good vectors for both empty and
 parametrized cases (see `ScriptAddressConformanceTest`). Parameter types:
 `bytes`, `string`, `bigint`, `integer`, `boolean`.
 
-**S3** varies by `extra.script.type`:
+**S3** is controlled by `x402.verification.script-datum-policy`:
 
-| Version | Requires |
+| Policy | Behavior |
 |---|---|
-| `plutusV1` | a datum **hash** (inline is not valid for V1) |
-| `plutusV2` | inline **or** hash |
-| `plutusV3` | inline or hash, unless `x402.verification.script-datum-policy: v3-optional` |
-| absent / unknown (hash-only) | inline or hash |
+| `reference` (default) | No datum-kind checks — mirrors the TS reference facilitator. The one exception: a `plutusV1` script whose locked output carries an INLINE datum is rejected, since the ledger cannot represent an inline datum in a Plutus V1 script context — the output is guaranteed unspendable by that script. The scheme spec permits (but does not mandate) rejecting datum-less outputs; this facilitator's default takes the permissive reference-parity option except for this one guaranteed-stranding case. |
+| `strict` | Plutus-version- and datum-kind-aware: `plutusV1` requires a datum **hash** (inline is not valid for V1); `plutusV2` requires inline **or** hash; `plutusV3` requires inline **or** hash; absent/unknown (hash-only) requires inline or hash. |
+| `v3-optional` | Same as `strict`, except `plutusV3` also allows a datum-less output. |
 
-V3 is configurable because the datum genuinely is optional for some V3 validators,
-but requiring it is the safe default — a lock whose validator needs a datum and
-didn't get one is unspendable, i.e. funds burned. Default is `strict`; opt out
-per-deployment only if you know your validator tolerates it.
+`strict` and `v3-optional` remain available as opt-in, stricter policies for
+deployments that want to reject datum-less locks up front rather than rely on
+the reference behavior.
 
 ---
 
@@ -264,5 +262,5 @@ field. An omitted field is silently skipped; an explicit `null` is not an
 equivalent input and fails with an invalid-payload error instead.
 
 Coverage lives in `ExactCardanoVerifyTest` (32), `MasumiTransferVerifierTest`
-(24), `ScriptTransferVerifierTest` (12), `ScriptAddressConformanceTest` (9), and
+(28), `ScriptTransferVerifierTest` (14), `ScriptAddressConformanceTest` (9), and
 `CardanoTransactionDecoderTest` (6).

@@ -176,7 +176,9 @@ public final class TestTx {
             BigInteger unlockTime,
             BigInteger externalDisputeUnlockTime,
             long stateAlt,
-            boolean cooldownCorrupt) { // f16 seller_cooldown_time as a non-integer (Constr) when true
+            boolean cooldownCorrupt, // f16 seller_cooldown_time as a non-integer (Constr) when true
+            String buyerReturnAddress, // null == datum None (f1)
+            String sellerReturnAddress) { // null == datum None (f3)
 
         public static MasumiSpec defaults() {
             return new MasumiSpec(
@@ -197,99 +199,131 @@ public final class TestTx {
                     MASUMI_UNLOCK_TIME,
                     MASUMI_EXTERNAL_DISPUTE_UNLOCK_TIME,
                     0L, // FundsLocked
-                    false); // well-typed cooldowns
+                    false, // well-typed cooldowns
+                    null, null); // buyer/seller return address: None
         }
 
         public MasumiSpec withAmount(BigInteger v) {
             return new MasumiSpec(v, buyerAddress, buyerIsScript, sellerAddress, sellerIsScript, rootAlt,
                     fieldCount, referenceKeyHex, referenceSignatureHex, sellerNonceHex, buyerNonceHex,
                     agentIdentifierHex, collateralReturnLovelace, inputHashHex, resultHashHex, payByTime,
-                    submitResultTime, unlockTime, externalDisputeUnlockTime, stateAlt, cooldownCorrupt);
+                    submitResultTime, unlockTime, externalDisputeUnlockTime, stateAlt, cooldownCorrupt,
+                    buyerReturnAddress, sellerReturnAddress);
         }
         public MasumiSpec withCollateralReturnLovelace(BigInteger v) {
             return new MasumiSpec(amount, buyerAddress, buyerIsScript, sellerAddress, sellerIsScript, rootAlt,
                     fieldCount, referenceKeyHex, referenceSignatureHex, sellerNonceHex, buyerNonceHex,
                     agentIdentifierHex, v, inputHashHex, resultHashHex, payByTime,
-                    submitResultTime, unlockTime, externalDisputeUnlockTime, stateAlt, cooldownCorrupt);
+                    submitResultTime, unlockTime, externalDisputeUnlockTime, stateAlt, cooldownCorrupt,
+                    buyerReturnAddress, sellerReturnAddress);
         }
         public MasumiSpec withBuyerAddress(String v) {
             return new MasumiSpec(amount, v, buyerIsScript, sellerAddress, sellerIsScript, rootAlt,
                     fieldCount, referenceKeyHex, referenceSignatureHex, sellerNonceHex, buyerNonceHex,
                     agentIdentifierHex, collateralReturnLovelace, inputHashHex, resultHashHex, payByTime,
-                    submitResultTime, unlockTime, externalDisputeUnlockTime, stateAlt, cooldownCorrupt);
+                    submitResultTime, unlockTime, externalDisputeUnlockTime, stateAlt, cooldownCorrupt,
+                    buyerReturnAddress, sellerReturnAddress);
         }
         public MasumiSpec withBuyerIsScript(boolean v) {
             return new MasumiSpec(amount, buyerAddress, v, sellerAddress, sellerIsScript, rootAlt,
                     fieldCount, referenceKeyHex, referenceSignatureHex, sellerNonceHex, buyerNonceHex,
                     agentIdentifierHex, collateralReturnLovelace, inputHashHex, resultHashHex, payByTime,
-                    submitResultTime, unlockTime, externalDisputeUnlockTime, stateAlt, cooldownCorrupt);
+                    submitResultTime, unlockTime, externalDisputeUnlockTime, stateAlt, cooldownCorrupt,
+                    buyerReturnAddress, sellerReturnAddress);
         }
         public MasumiSpec withSellerAddress(String v) {
             return new MasumiSpec(amount, buyerAddress, buyerIsScript, v, sellerIsScript, rootAlt,
                     fieldCount, referenceKeyHex, referenceSignatureHex, sellerNonceHex, buyerNonceHex,
                     agentIdentifierHex, collateralReturnLovelace, inputHashHex, resultHashHex, payByTime,
-                    submitResultTime, unlockTime, externalDisputeUnlockTime, stateAlt, cooldownCorrupt);
+                    submitResultTime, unlockTime, externalDisputeUnlockTime, stateAlt, cooldownCorrupt,
+                    buyerReturnAddress, sellerReturnAddress);
         }
         public MasumiSpec withSellerIsScript(boolean v) {
             return new MasumiSpec(amount, buyerAddress, buyerIsScript, sellerAddress, v, rootAlt,
                     fieldCount, referenceKeyHex, referenceSignatureHex, sellerNonceHex, buyerNonceHex,
                     agentIdentifierHex, collateralReturnLovelace, inputHashHex, resultHashHex, payByTime,
-                    submitResultTime, unlockTime, externalDisputeUnlockTime, stateAlt, cooldownCorrupt);
+                    submitResultTime, unlockTime, externalDisputeUnlockTime, stateAlt, cooldownCorrupt,
+                    buyerReturnAddress, sellerReturnAddress);
         }
         public MasumiSpec withRootAlt(long v) {
             return new MasumiSpec(amount, buyerAddress, buyerIsScript, sellerAddress, sellerIsScript, v,
                     fieldCount, referenceKeyHex, referenceSignatureHex, sellerNonceHex, buyerNonceHex,
                     agentIdentifierHex, collateralReturnLovelace, inputHashHex, resultHashHex, payByTime,
-                    submitResultTime, unlockTime, externalDisputeUnlockTime, stateAlt, cooldownCorrupt);
+                    submitResultTime, unlockTime, externalDisputeUnlockTime, stateAlt, cooldownCorrupt,
+                    buyerReturnAddress, sellerReturnAddress);
         }
         public MasumiSpec withFieldCount(int v) {
             return new MasumiSpec(amount, buyerAddress, buyerIsScript, sellerAddress, sellerIsScript, rootAlt,
                     v, referenceKeyHex, referenceSignatureHex, sellerNonceHex, buyerNonceHex,
                     agentIdentifierHex, collateralReturnLovelace, inputHashHex, resultHashHex, payByTime,
-                    submitResultTime, unlockTime, externalDisputeUnlockTime, stateAlt, cooldownCorrupt);
+                    submitResultTime, unlockTime, externalDisputeUnlockTime, stateAlt, cooldownCorrupt,
+                    buyerReturnAddress, sellerReturnAddress);
         }
         public MasumiSpec withReferenceKeyHex(String v) {
             return new MasumiSpec(amount, buyerAddress, buyerIsScript, sellerAddress, sellerIsScript, rootAlt,
                     fieldCount, v, referenceSignatureHex, sellerNonceHex, buyerNonceHex,
                     agentIdentifierHex, collateralReturnLovelace, inputHashHex, resultHashHex, payByTime,
-                    submitResultTime, unlockTime, externalDisputeUnlockTime, stateAlt, cooldownCorrupt);
+                    submitResultTime, unlockTime, externalDisputeUnlockTime, stateAlt, cooldownCorrupt,
+                    buyerReturnAddress, sellerReturnAddress);
         }
         public MasumiSpec withReferenceSignatureHex(String v) {
             return new MasumiSpec(amount, buyerAddress, buyerIsScript, sellerAddress, sellerIsScript, rootAlt,
                     fieldCount, referenceKeyHex, v, sellerNonceHex, buyerNonceHex,
                     agentIdentifierHex, collateralReturnLovelace, inputHashHex, resultHashHex, payByTime,
-                    submitResultTime, unlockTime, externalDisputeUnlockTime, stateAlt, cooldownCorrupt);
+                    submitResultTime, unlockTime, externalDisputeUnlockTime, stateAlt, cooldownCorrupt,
+                    buyerReturnAddress, sellerReturnAddress);
         }
         public MasumiSpec withResultHashHex(String v) {
             return new MasumiSpec(amount, buyerAddress, buyerIsScript, sellerAddress, sellerIsScript, rootAlt,
                     fieldCount, referenceKeyHex, referenceSignatureHex, sellerNonceHex, buyerNonceHex,
                     agentIdentifierHex, collateralReturnLovelace, inputHashHex, v, payByTime,
-                    submitResultTime, unlockTime, externalDisputeUnlockTime, stateAlt, cooldownCorrupt);
+                    submitResultTime, unlockTime, externalDisputeUnlockTime, stateAlt, cooldownCorrupt,
+                    buyerReturnAddress, sellerReturnAddress);
         }
         public MasumiSpec withPayByTime(BigInteger v) {
             return new MasumiSpec(amount, buyerAddress, buyerIsScript, sellerAddress, sellerIsScript, rootAlt,
                     fieldCount, referenceKeyHex, referenceSignatureHex, sellerNonceHex, buyerNonceHex,
                     agentIdentifierHex, collateralReturnLovelace, inputHashHex, resultHashHex, v,
-                    submitResultTime, unlockTime, externalDisputeUnlockTime, stateAlt, cooldownCorrupt);
+                    submitResultTime, unlockTime, externalDisputeUnlockTime, stateAlt, cooldownCorrupt,
+                    buyerReturnAddress, sellerReturnAddress);
         }
         public MasumiSpec withUnlockTime(BigInteger v) {
             return new MasumiSpec(amount, buyerAddress, buyerIsScript, sellerAddress, sellerIsScript, rootAlt,
                     fieldCount, referenceKeyHex, referenceSignatureHex, sellerNonceHex, buyerNonceHex,
                     agentIdentifierHex, collateralReturnLovelace, inputHashHex, resultHashHex, payByTime,
-                    submitResultTime, v, externalDisputeUnlockTime, stateAlt, cooldownCorrupt);
+                    submitResultTime, v, externalDisputeUnlockTime, stateAlt, cooldownCorrupt,
+                    buyerReturnAddress, sellerReturnAddress);
         }
         public MasumiSpec withStateAlt(long v) {
             return new MasumiSpec(amount, buyerAddress, buyerIsScript, sellerAddress, sellerIsScript, rootAlt,
                     fieldCount, referenceKeyHex, referenceSignatureHex, sellerNonceHex, buyerNonceHex,
                     agentIdentifierHex, collateralReturnLovelace, inputHashHex, resultHashHex, payByTime,
-                    submitResultTime, unlockTime, externalDisputeUnlockTime, v, cooldownCorrupt);
+                    submitResultTime, unlockTime, externalDisputeUnlockTime, v, cooldownCorrupt,
+                    buyerReturnAddress, sellerReturnAddress);
         }
         /** Corrupts f16 seller_cooldown_time to a non-integer (empty Constr) -- TS reads it as asInt. */
         public MasumiSpec withCooldownCorrupt(boolean v) {
             return new MasumiSpec(amount, buyerAddress, buyerIsScript, sellerAddress, sellerIsScript, rootAlt,
                     fieldCount, referenceKeyHex, referenceSignatureHex, sellerNonceHex, buyerNonceHex,
                     agentIdentifierHex, collateralReturnLovelace, inputHashHex, resultHashHex, payByTime,
-                    submitResultTime, unlockTime, externalDisputeUnlockTime, stateAlt, v);
+                    submitResultTime, unlockTime, externalDisputeUnlockTime, stateAlt, v,
+                    buyerReturnAddress, sellerReturnAddress);
+        }
+        /** Emits {@code Some(addressData(v))} for f1 buyer_return_address instead of the default None. */
+        public MasumiSpec withBuyerReturnAddress(String v) {
+            return new MasumiSpec(amount, buyerAddress, buyerIsScript, sellerAddress, sellerIsScript, rootAlt,
+                    fieldCount, referenceKeyHex, referenceSignatureHex, sellerNonceHex, buyerNonceHex,
+                    agentIdentifierHex, collateralReturnLovelace, inputHashHex, resultHashHex, payByTime,
+                    submitResultTime, unlockTime, externalDisputeUnlockTime, stateAlt, cooldownCorrupt,
+                    v, sellerReturnAddress);
+        }
+        /** Emits {@code Some(addressData(v))} for f3 seller_return_address instead of the default None. */
+        public MasumiSpec withSellerReturnAddress(String v) {
+            return new MasumiSpec(amount, buyerAddress, buyerIsScript, sellerAddress, sellerIsScript, rootAlt,
+                    fieldCount, referenceKeyHex, referenceSignatureHex, sellerNonceHex, buyerNonceHex,
+                    agentIdentifierHex, collateralReturnLovelace, inputHashHex, resultHashHex, payByTime,
+                    submitResultTime, unlockTime, externalDisputeUnlockTime, stateAlt, cooldownCorrupt,
+                    buyerReturnAddress, v);
         }
     }
 
@@ -378,9 +412,9 @@ public final class TestTx {
     public static PlutusData buildMasumiDatum(MasumiSpec spec) {
         List<PlutusData> fields = new ArrayList<>();
         fields.add(addressToDatum(spec.buyerAddress(), spec.buyerIsScript()));               // 0 buyer
-        fields.add(ConstrPlutusData.of(1));                                                  // 1 buyer_return_address = None
+        fields.add(optionAddressDatum(spec.buyerReturnAddress()));                           // 1 buyer_return_address
         fields.add(addressToDatum(spec.sellerAddress(), spec.sellerIsScript()));             // 2 seller
-        fields.add(ConstrPlutusData.of(1));                                                  // 3 seller_return_address = None
+        fields.add(optionAddressDatum(spec.sellerReturnAddress()));                          // 3 seller_return_address
         fields.add(BytesPlutusData.of(HexUtil.decodeHexString(spec.referenceKeyHex())));     // 4 reference_key
         fields.add(BytesPlutusData.of(HexUtil.decodeHexString(spec.referenceSignatureHex()))); // 5 reference_signature
         fields.add(BytesPlutusData.of(HexUtil.decodeHexString(spec.sellerNonceHex())));      // 6 seller_nonce
@@ -403,6 +437,11 @@ public final class TestTx {
             while (fields.size() < spec.fieldCount()) fields.add(BigIntPlutusData.of(0));
         }
         return ConstrPlutusData.of(spec.rootAlt(), fields.toArray(new PlutusData[0]));
+    }
+
+    /** {@code Option<Address>} datum: {@code Some(addressData(bech32))}, or {@code None} when null. */
+    private static PlutusData optionAddressDatum(String bech32) {
+        return bech32 == null ? ConstrPlutusData.of(1) : ConstrPlutusData.of(0, addressToDatum(bech32, false));
     }
 
     /**

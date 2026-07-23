@@ -9,6 +9,7 @@ import org.cardanofoundation.x402.facilitator.model.verification.DecodedTransact
 import org.cardanofoundation.x402.facilitator.service.registry.CardanoNetworks;
 import org.cardanofoundation.x402.facilitator.service.verification.method.ExtraValues;
 import org.cardanofoundation.x402.facilitator.service.verification.method.TransferMethodVerifier;
+import org.cardanofoundation.x402.facilitator.service.verification.method.masumi.MasumiDatum.MasumiAddressCredentials;
 import org.cardanofoundation.x402.facilitator.service.verification.method.masumi.MasumiDatum.MasumiDatumView;
 import org.cardanofoundation.x402.facilitator.service.verification.method.script.ScriptAddress;
 
@@ -88,6 +89,20 @@ public class MasumiTransferVerifier implements TransferMethodVerifier {
 
         // 3. Structural invariants of a fresh lock.
         if (freshLockInvariantsViolated(view)) return Optional.of(ErrorCodes.MASUMI_DATUM_INVALID);
+
+        // 3b. No participant or return address may BE the escrow. vested_pay
+        //     re-parses every output at the script address as a continuation datum
+        //     (`expect new_datum: Datum`), so a payout aimed back at the escrow
+        //     aborts every spend path; Masumi's own decodeV2ContractDatum rejects
+        //     such datums the same way. Anyone can lock this datum directly
+        //     on-chain, so reject before a seller treats it as paid and works.
+        MasumiAddressCredentials escrow = MasumiDatum.addressCredentials(contractAddress);
+        if (MasumiDatum.sameCredentials(view.buyer(), escrow)
+                || MasumiDatum.sameCredentials(view.seller(), escrow)
+                || (view.buyerReturnAddress() != null && MasumiDatum.sameCredentials(view.buyerReturnAddress(), escrow))
+                || (view.sellerReturnAddress() != null && MasumiDatum.sameCredentials(view.sellerReturnAddress(), escrow))) {
+            return Optional.of(ErrorCodes.MASUMI_DATUM_INVALID);
+        }
 
         // 4. Deadline: the tx MUST carry a validity upper bound (TTL) on/before
         //    pay_by_time. Uses the per-network configured clock (slot-config override).

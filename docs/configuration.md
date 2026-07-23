@@ -103,11 +103,14 @@ selected purely by `base-url`.
 | Key | Default | Notes |
 |---|---|---|
 | `x402.verification.max-tx-bytes` | `32768` | Bound checked pre-decode (A4) and against protocol `maxTxSize` (C3) |
-| `x402.verification.script-datum-policy` | `strict` | `strict` \| `v3-optional` |
+| `x402.verification.script-datum-policy` | `reference` | `reference` \| `strict` \| `v3-optional` |
 
-`v3-optional` makes the datum optional for `plutusV3` under the `script` method.
-`strict` is the safe default: a lock whose validator needs a datum and didn't get
-one is unspendable. Only relax it if you know your validator tolerates it.
+`reference` mirrors the TS reference facilitator: no datum-kind checks, except a
+`plutusV1` script whose locked output carries an inline datum is rejected (the
+ledger cannot represent that combination, so the output is guaranteed
+unspendable). `strict` and `v3-optional` are stricter, opt-in policies — see
+[verification.md](verification.md#script--arbitrary-plutus-lock) for the full
+per-policy behavior.
 
 ## Settlement
 

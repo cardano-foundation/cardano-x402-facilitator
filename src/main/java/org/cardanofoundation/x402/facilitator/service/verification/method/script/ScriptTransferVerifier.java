@@ -18,19 +18,31 @@ import java.util.Optional;
  *   <li><b>S1</b> — the reconstructed script hash (from {@code script}+parameters,
  *       or {@code scriptHash}) MUST equal {@code payTo}'s script credential.</li>
  *   <li><b>S2</b> — asset/amount/min-UTXO: enforced by the shared Stage E checks.</li>
- *   <li><b>S3</b> — Plutus-version- and datum-kind-aware datum policy: without it
- *       a payment could lock funds to an output the seller's script can never
- *       spend. PlutusV1 requires a datum HASH; PlutusV2 requires an inline datum
- *       or a datum hash; PlutusV3 allows a datum-less output only under
- *       {@code script-datum-policy: v3-optional}; an unknown version
- *       ({@code scriptHash}-only) requires SOME datum. Datum <em>contents</em>
- *       are never validated (contract-specific).</li>
+ *   <li><b>S3</b> — the {@code script-datum-policy} controls how strictly the
+ *       escrow output's datum is checked. Datum <em>contents</em> are never
+ *       validated (contract-specific):
+ *     <ul>
+ *       <li>{@code reference} (default) — mirrors the TS reference facilitator:
+ *           no datum-kind checks, EXCEPT a {@code plutusV1} script whose locked
+ *           output carries an INLINE datum is rejected. The ledger cannot
+ *           represent an inline datum in a Plutus V1 script context, so such an
+ *           output is unspendable by that script — the one guaranteed-stranding
+ *           case, which the scheme spec explicitly permits rejecting.</li>
+ *       <li>{@code strict} — Plutus-version- and datum-kind-aware: PlutusV1
+ *           requires a datum HASH; PlutusV2 requires an inline datum or a datum
+ *           hash; PlutusV3 requires one too; an unknown version
+ *           ({@code scriptHash}-only) requires SOME datum.</li>
+ *       <li>{@code v3-optional} — same as {@code strict}, except PlutusV3 also
+ *           allows a datum-less output.</li>
+ *     </ul>
+ *   </li>
  * </ul>
  */
 @RequiredArgsConstructor
 public class ScriptTransferVerifier implements TransferMethodVerifier {
 
-    private final boolean v3DatumOptional;
+    /** {@code "reference"} (default) | {@code "strict"} | {@code "v3-optional"}. */
+    private final String datumPolicy;
 
     @Override
     public boolean supports(String method) {
@@ -52,13 +64,22 @@ public class ScriptTransferVerifier implements TransferMethodVerifier {
         if (locked == null) return Optional.of(ErrorCodes.SCRIPT_DATUM_MISSING);
         boolean hasInline = locked.raw().getInlineDatum() != null;
         boolean hasHash = locked.raw().getDatumHash() != null;
-
         String version = plutusVersion(extra);
+
+        if ("reference".equals(datumPolicy)) {
+            // The TS reference facilitator performs no datum-kind checks. The one
+            // exception: a PlutusV1 script can never spend an inline datum (the
+            // ledger has no representation for it in a V1 script context), so
+            // such an output is guaranteed unspendable and safe to reject.
+            boolean v1InlineUnspendable = "plutusV1".equals(version) && hasInline;
+            return v1InlineUnspendable ? Optional.of(ErrorCodes.SCRIPT_DATUM_MISSING) : Optional.empty();
+        }
+
         boolean datumMissing = switch (version) {
             // PlutusV1 predates inline datums: only a datum HASH makes the output spendable.
             case "plutusV1" -> !hasHash;
             case "plutusV2" -> !hasInline && !hasHash;
-            case "plutusV3" -> !hasInline && !hasHash && !v3DatumOptional;
+            case "plutusV3" -> !hasInline && !hasHash && !"v3-optional".equals(datumPolicy);
             // scriptHash-only (language unknowable): require SOME datum.
             default -> !hasInline && !hasHash;
         };

@@ -42,7 +42,7 @@ public record X402Properties(List<NetworkEntry> networks,
         }
 
         public String scriptDatumPolicyOrDefault() {
-            return scriptDatumPolicy == null ? "strict" : scriptDatumPolicy;
+            return scriptDatumPolicy == null ? "reference" : scriptDatumPolicy;
         }
     }
 

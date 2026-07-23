@@ -37,3 +37,7 @@ x402:
           project-id: ${BLOCKFROST_PROJECT_ID:}
   # x402.verification / settle / duplicate-cache / http are optional and default to
   # sensible values in code — set them only to override. See docs/configuration.md.
+  verification:
+    # reference (default) mirrors the TS reference facilitator's no-datum-checks
+    # behavior; strict and v3-optional remain available for stricter deployments.
+    script-datum-policy: reference

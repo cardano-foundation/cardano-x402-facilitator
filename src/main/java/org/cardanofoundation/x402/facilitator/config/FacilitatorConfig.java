@@ -60,14 +60,13 @@ public class FacilitatorConfig {
 
     @Bean
     public ScriptTransferVerifier scriptTransferVerifier(X402Properties props) {
-        boolean v3DatumOptional = props.verification() != null
-                && "v3-optional".equals(props.verification().scriptDatumPolicyOrDefault());
-        return new ScriptTransferVerifier(v3DatumOptional);
+        String datumPolicy = props.verification() == null ? "reference" : props.verification().scriptDatumPolicyOrDefault();
+        return new ScriptTransferVerifier(datumPolicy);
     }
 
     @Bean
     public Clock facilitatorClock() {
-        return Clock.systemUTC();
+        return Clock.systemDefaultZone();
     }
 
     /** One chain backend per network entry; shared by the registry and the reconciler. */

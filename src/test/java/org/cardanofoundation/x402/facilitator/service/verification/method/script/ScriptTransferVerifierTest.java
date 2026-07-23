@@ -36,19 +36,21 @@ class ScriptTransferVerifierTest {
     FakeChainService chain;
     ExactCardanoScheme strict;
     ExactCardanoScheme v3Optional;
+    ExactCardanoScheme reference;
 
     @BeforeEach
     void setUp() {
         chain = new FakeChainService();
         chain.unspent.put(TestTx.NONCE, TestTx.PAYER_ADDRESS);
         chain.currentSlot = 500_000L;
-        strict = scheme(false);
-        v3Optional = scheme(true);
+        strict = scheme("strict");
+        v3Optional = scheme("v3-optional");
+        reference = scheme("reference");
     }
 
-    ExactCardanoScheme scheme(boolean v3DatumOptional) {
+    ExactCardanoScheme scheme(String datumPolicy) {
         return new ExactCardanoScheme(chain, chain, new CardanoTransactionDecoder(),
-                List.of(new DefaultTransferVerifier(), new ScriptTransferVerifier(v3DatumOptional)), 32768);
+                List.of(new DefaultTransferVerifier(), new ScriptTransferVerifier(datumPolicy)), 32768);
     }
 
     static Map<String, Object> inlineExtra(String type, String code) {
@@ -160,6 +162,22 @@ class ScriptTransferVerifierTest {
         // Unknown language (scriptHash-only) => SOME datum required, regardless of v3 policy.
         VerifyResponse r = verify(v3Optional, TestTx.SCRIPT_ADDR_V3,
                 hashExtra(TestTx.SCRIPT_HASH_V3), null, null);
+        assertThat(r.invalidReason()).isEqualTo(ErrorCodes.SCRIPT_DATUM_MISSING);
+    }
+
+    @Test void referencePolicyAcceptsV3Datumless() {
+        // "reference" mirrors the TS reference facilitator: no datum-kind checks at all.
+        VerifyResponse r = verify(reference, TestTx.SCRIPT_ADDR_V3,
+                inlineExtra("plutusV3", TestTx.SCRIPT_CODE_V3), null, null);
+        assertThat(r.isValid()).isTrue();
+    }
+
+    @Test void referencePolicyRejectsV1WithInlineDatum() {
+        // The one exception: a PlutusV1 script can never spend an inline datum -- the
+        // ledger has no representation for it in a V1 script context -- so this output
+        // is guaranteed unspendable and rejected even under "reference".
+        VerifyResponse r = verify(reference, TestTx.SCRIPT_ADDR_V1,
+                inlineExtra("plutusV1", TestTx.SCRIPT_CODE_V3), INLINE, null);
         assertThat(r.invalidReason()).isEqualTo(ErrorCodes.SCRIPT_DATUM_MISSING);
     }
 }

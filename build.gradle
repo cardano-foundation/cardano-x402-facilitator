@@ -39,11 +39,7 @@ dependencies {
 
     implementation "com.bloxbean.cardano:cardano-client-lib:${cardanoClientVersion}"
     implementation "com.bloxbean.cardano:cardano-client-backend-blockfrost:${cardanoClientVersion}"
-    // Aiken UPLC apply-params (JNI) for the `script` assetTransferMethod's S1
-    // address reconstruction; bundles native libs incl. darwin-aarch64.
     implementation 'com.bloxbean.cardano:aiken-java-binding:0.1.0'
-    // A standalone yaci-store is reached through the cardano-client blockfrost backend
-    // above (its Blockfrost-compatible API) — no separate dependency needed.
 
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     testImplementation 'org.testcontainers:postgresql'
