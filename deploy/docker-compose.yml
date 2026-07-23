@@ -4,18 +4,23 @@
 #          at a standalone yaci-store's Blockfrost-compatible endpoint to use it).
 #   full:  postgres + mithril-sync -> cardano-node + yaci-store (standalone indexer
 #          exposing a Blockfrost-compatible API) + facilitator-node.
+#   yano:  postgres + yano + facilitator. yano is a self-contained Cardano data node
+#          that syncs from a public relay (n2n) and serves a Blockfrost-compatible
+#          REST API itself — no mithril, cardano-node, or separate indexer. Lighter
+#          than `full`; the node and the API are one process.
 #
 # The facilitator reaches the chain through the Blockfrost provider; a standalone
-# yaci-store is consumed the same way, via its Blockfrost-compatible API.
+# yaci-store or a yano node is consumed the same way, via its Blockfrost-compatible API.
 #
 # Bring up light:  docker compose --profile light up -d
 # Bring up full:   CARDANO_NETWORK=preprod docker compose --profile full up -d
+# Bring up yano:   docker compose --profile yano up -d
 name: cardano-x402-facilitator
 
 services:
   postgres:
     image: postgres:17-alpine
-    profiles: [light, full]
+    profiles: [light, full, yano]
     environment:
       POSTGRES_DB: postgres
       POSTGRES_USER: postgres
@@ -130,6 +135,20 @@ services:
       STORE_EXTENSIONS_BLOCKFROST_ENABLED: "true"
       BLOCKFROST_APIPREFIX: /api/v1/blockfrost
       STORE_PLUGINS_ENABLED: "false"                         # avoids the non-root sandbox mkdir
+      # Keep only the stores the facilitator's Blockfrost calls need:
+      #   blocks  -> /blocks/latest (current slot / confirmation depth)
+      #   transaction -> /txs/{hash}, /txs/{hash}/utxos (inclusion, outref owner)
+      #   utxo    -> /addresses/{addr}/utxos (nonce spent-check)
+      #   epoch   -> /epochs/latest/parameters (min-UTxO, maxTxSize)
+      # Submission uses the N2C socket above, not a store. Everything else is off so
+      # yaci-store indexes less and syncs faster. (account/adapot/*-aggr are already
+      # off by default.)
+      STORE_ASSETS_ENABLED: "false"
+      STORE_SCRIPT_ENABLED: "false"
+      STORE_METADATA_ENABLED: "false"
+      STORE_MIR_ENABLED: "false"
+      STORE_STAKING_ENABLED: "false"
+      STORE_GOVERNANCE_ENABLED: "false"
     volumes:
       - node-ipc:/ipc              # N2C submit socket
       - yaci-store-data:/app/data
@@ -160,8 +179,71 @@ services:
       - "4022:4022"
     restart: unless-stopped
 
+  # ---- yano profile: self-contained Cardano data node + Blockfrost REST API -----
+  # yano syncs from a public relay over n2n and exposes a Blockfrost-compatible REST
+  # API under /api/v1 on 7070 — the facilitator consumes it via the same
+  # BFBackendService as hosted Blockfrost or yaci-store. Env vars mirror yano's own
+  # bundle: https://github.com/bloxbean/yano/tree/main/docker/compose
+  # Docker creates the named volume root-owned, but yano runs as ${YANO_UID}:${YANO_GID}
+  # and RocksDB must write /app/chainstate. Chown the volume once before yano starts
+  # (yano's own bundle avoids this with a host bind-mount its launcher pre-creates).
+  yano-init:
+    image: busybox:1.37
+    profiles: [yano]
+    command: ["sh", "-c", "chown -R ${YANO_UID:-1000}:${YANO_GID:-1000} /app/chainstate"]
+    volumes:
+      - yano-chainstate:/app/chainstate
+    restart: "no"
+
+  yano:
+    image: ${YANO_IMAGE:-bloxbean/yano}:${YANO_IMAGE_TAG:-0.1.0-pre11}-${YANO_IMAGE_FLAVOR:-native}
+    profiles: [yano]
+    user: "${YANO_UID:-1000}:${YANO_GID:-1000}"
+    depends_on:
+      yano-init:
+        condition: service_completed_successfully
+    environment:
+      # Comma-separated Quarkus profile list; the first entry is the network
+      # (e.g. preprod, or preprod,relay to also serve downstream nodes over n2n).
+      YANO_PROFILE: ${YANO_PROFILE:-preprod}
+      YANO_NETWORK: ${YANO_NETWORK:-preprod}
+      JAVA_OPTS: ${JAVA_OPTS:-}
+      YANO_EXTRA_ARGS: ${YANO_EXTRA_ARGS:-}
+    ports:
+      - "${YANO_HTTP_PORT:-7070}:7070"    # Blockfrost-compatible REST API (/api/v1)
+      - "${YANO_N2N_PORT:-13337}:13337"   # n2n — serves downstream nodes (optional)
+    volumes:
+      - yano-chainstate:/app/chainstate   # network + config files seed from the image on first start
+    restart: unless-stopped
+
+  facilitator-yano:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    profiles: [yano]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      yano:
+        condition: service_started
+    environment:
+      DB_URL: jdbc:postgresql://postgres:5432/postgres
+      DB_USER: postgres
+      DB_PASSWORD: ${DB_PASSWORD:-postgres}
+      CARDANO_NETWORK: ${CARDANO_NETWORK:-preprod}
+      # Consume the yano node via its Blockfrost-compatible REST API — the same
+      # blockfrost provider as hosted Blockfrost / yaci-store; project-id is ignored.
+      # Override if a yano build serves Blockfrost paths under a different prefix
+      # (e.g. http://yano:7070/api/v1/blockfrost).
+      BLOCKFROST_BASE_URL: ${BLOCKFROST_BASE_URL:-http://yano:7070/api/v1}
+      BLOCKFROST_PROJECT_ID: ""
+    ports:
+      - "4022:4022"
+    restart: unless-stopped
+
 volumes:
   pgdata:
   node-db:
   node-ipc:
   yaci-store-data:
+  yano-chainstate:
