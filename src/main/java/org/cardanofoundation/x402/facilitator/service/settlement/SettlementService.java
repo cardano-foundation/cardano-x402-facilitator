@@ -117,17 +117,25 @@ public class SettlementService {
             }
         }
 
-        // accept-mempool fast path: treat node acceptance as settled without awaiting
-        // the confirmation depth (faster, less safe — opt-in).
-        if (config.acceptMempool()) {
+        // Rule 9: the depth comes from the 402's confirmationPolicy, not the
+        // operator's default. A server that quoted `l1Confirmations: 2` must not
+        // release on one, and one that quoted 0 should not be made to wait for
+        // the operator's preferred depth.
+        Integer declared = org.cardanofoundation.x402.facilitator.service.verification.CardanoPolicies
+                .l1Confirmations(requirements.extra());
+        int requiredDepth = declared != null ? declared : config.confirmationDepth();
+
+        // accept-mempool fast path: only when the payment itself accepts mempool
+        // evidence (-1). Opting in operator-side must not weaken a stricter 402.
+        if (config.acceptMempool() && requiredDepth <= -1) {
             return SettleResponse.ok(txHash, network, payer, "mempool");
         }
 
         // Step 5 — await inclusion at the configured depth
-        InclusionResult inclusion = chain.awaitInclusion(txHash, config.confirmationDepth(),
+        InclusionResult inclusion = chain.awaitInclusion(txHash, Math.max(0, requiredDepth),
                 config.confirmationTimeout());
         if (inclusion instanceof InclusionResult.Included included
-                && included.depth() >= config.confirmationDepth()) {
+                && included.depth() >= Math.max(0, requiredDepth)) {
             SettleResponse ok = SettleResponse.ok(txHash, network, payer, "confirmed");
             repo.casTransition(txHash, attemptId, Status.SUBMITTED, Status.CONFIRMED, Map.of(
                     "confirmed_at", clock.instant(),

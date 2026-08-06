@@ -40,6 +40,13 @@ dependencies {
     implementation "com.bloxbean.cardano:cardano-client-lib:${cardanoClientVersion}"
     implementation "com.bloxbean.cardano:cardano-client-backend-blockfrost:${cardanoClientVersion}"
     implementation 'com.bloxbean.cardano:aiken-java-binding:0.1.0'
+    // CIP-8 / COSE_Sign1 + COSE_Key codec: the seller's authorization over
+    // termsDigest is a real signature to verify, not bytes to string-compare.
+    implementation "com.bloxbean.cardano:cardano-client-cip8:${cardanoClientVersion}"
+    // RFC 8785 JCS. Jackson's key ordering is NOT JCS: it does not canonicalize
+    // number formatting or string escaping, so digests would diverge from the
+    // TypeScript implementation on values it happens to format differently.
+    implementation 'io.github.erdtman:java-json-canonicalization:1.1'
 
     testImplementation 'org.springframework.boot:spring-boot-starter-test'
     testImplementation 'org.testcontainers:postgresql'

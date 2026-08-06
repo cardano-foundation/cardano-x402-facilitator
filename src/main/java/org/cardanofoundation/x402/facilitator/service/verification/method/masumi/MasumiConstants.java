@@ -19,6 +19,17 @@ public final class MasumiConstants {
      */
     public static final BigInteger MASUMI_MIN_COLLATERAL_LOVELACE = BigInteger.valueOf(1_435_230L);
 
+    /**
+     * Minimum spacing the spec requires between the lock deadlines:
+     * {@code pay_by + 5min <= submit_result}, {@code submit_result + 15min <= unlock},
+     * {@code unlock + 15min <= external_dispute_unlock}. Ordering alone is not
+     * enough — a lock whose windows collapse leaves no room to submit a result
+     * or contest one.
+     */
+    public static final BigInteger MASUMI_MIN_PAY_TO_SUBMIT_MS = BigInteger.valueOf(5L * 60_000L);
+    public static final BigInteger MASUMI_MIN_SUBMIT_TO_UNLOCK_MS = BigInteger.valueOf(15L * 60_000L);
+    public static final BigInteger MASUMI_MIN_UNLOCK_TO_DISPUTE_MS = BigInteger.valueOf(15L * 60_000L);
+
     // Byte deltas / buffers used by the min-UTXO estimator below.
     /** CBOR byte delta of an empty vs 32-byte {@code result_hash} (0x40 -> 0x5820…). */
     private static final int RESULT_HASH_DELTA_BYTES = 33;

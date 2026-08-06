@@ -8,6 +8,7 @@ import com.bloxbean.cardano.client.common.MinAdaCalculator;
 import com.bloxbean.cardano.client.util.HexUtil;
 import org.cardanofoundation.x402.facilitator.chain.ChainLookupException;
 import org.cardanofoundation.x402.facilitator.chain.FacilitatorChainService;
+import org.cardanofoundation.x402.facilitator.chain.NetworkClock;
 import org.cardanofoundation.x402.facilitator.chain.ProtocolParamsProvider;
 import org.cardanofoundation.x402.facilitator.model.ErrorCodes;
 import org.cardanofoundation.x402.facilitator.model.chain.UtxoState;
@@ -46,6 +47,8 @@ public class ExactCardanoScheme {
     private final CardanoTransactionDecoder decoder;
     private final List<TransferMethodVerifier> methodVerifiers;
     private final int maxTxBytes;
+    /** Era-aware slot<->wall-clock conversion for the rule 7 TTL bounds. */
+    private final NetworkClock clock;
 
     public VerifyResponse verify(PaymentPayload payload, PaymentRequirements requirements) {
         try {
@@ -123,6 +126,17 @@ public class ExactCardanoScheme {
                 }
                 if (tx.ttlSlot() != null && tx.ttlSlot() <= currentSlot)
                     return VerifyResponse.invalid(ErrorCodes.TTL_EXPIRED, null, "");
+                // Rule 7 upper bound: a TTL further ahead than maxTimeoutSeconds
+                // would hold the payment open past the window the server quoted.
+                // Compared in wall-clock via the era-aware clock — slots are not
+                // seconds and the ratio is a protocol parameter, not a constant.
+                if (tx.ttlSlot() != null && requirements.maxTimeoutSeconds() != null) {
+                    long ttlMs = clock.slotToTime(tx.ttlSlot()).toEpochMilli();
+                    long latestMs = clock.slotToTime(currentSlot).toEpochMilli()
+                            + requirements.maxTimeoutSeconds() * 1000L;
+                    if (ttlMs > latestMs)
+                        return VerifyResponse.invalid(ErrorCodes.TTL_TOO_FAR, null, "");
+                }
                 if (tx.validityStartSlot() != null && tx.validityStartSlot() > currentSlot)
                     return VerifyResponse.invalid(ErrorCodes.NOT_YET_VALID, null, "");
             }
@@ -136,6 +150,24 @@ public class ExactCardanoScheme {
                 return VerifyResponse.invalid(ErrorCodes.INVALID_PAYLOAD,
                         "transaction size " + tx.serializedSize() + " exceeds protocol maxTxSize "
                                 + pp.maxTxSize(), "");
+
+            // Rule 6 (submission check) + Rule 9 (confirmation policy). Both come
+            // from the canonical requirements, never the client-echoed `accepted`:
+            // the policy is the server's to set, not the payer's to choose.
+            String submissionPolicy = CardanoPolicies.submissionPolicy(requirements.extra());
+            Integer requiredConfirmations = CardanoPolicies.l1Confirmations(requirements.extra());
+            if (submissionPolicy == null || requiredConfirmations == null)
+                return VerifyResponse.invalid(ErrorCodes.REQUIREMENTS_POLICY, null, "");
+            String submissionMode = CardanoPolicies.submissionMode(payload.payload());
+            if (submissionMode == null || !CardanoPolicies.modeAllowed(submissionPolicy, submissionMode))
+                return VerifyResponse.invalid(ErrorCodes.SUBMISSION_MODE_MISMATCH, null, "");
+            // Client mode means authenticating a transaction this facilitator never
+            // broadcast. Without that evidence path, accepting the mode would report
+            // a settlement nobody verified — so it fails closed rather than quietly
+            // degrading to server submission.
+            if (CardanoPolicies.SUBMISSION_CLIENT.equals(submissionMode))
+                return VerifyResponse.invalid(ErrorCodes.SUBMISSION_MODE_UNSUPPORTED,
+                        "client submission requires authenticated settlement evidence", "");
 
             // Stage D — replay protection (chain UTxO set)
             String nonceLower = normalizeNonce(nonce);

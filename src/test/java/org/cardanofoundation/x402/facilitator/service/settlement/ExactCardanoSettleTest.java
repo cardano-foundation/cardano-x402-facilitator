@@ -64,9 +64,10 @@ class ExactCardanoSettleTest {
         jdbc.update("DELETE FROM facilitator.settlement", Map.of());
         chain = new FakeChainService();
         chain.unspent.put(TestTx.NONCE, TestTx.PAYER_ADDRESS);
-        chain.currentSlot = 500_000L;
+        chain.currentSlot = 999_700L;
         scheme = new ExactCardanoScheme(chain, chain, new CardanoTransactionDecoder(),
-                List.of(new DefaultTransferVerifier()), 32768);
+                List.of(new DefaultTransferVerifier()), 32768,
+                org.cardanofoundation.x402.facilitator.chain.ShelleyNetworkClock.forNetwork("cardano:preprod", null));
         service = service(false);
     }
 

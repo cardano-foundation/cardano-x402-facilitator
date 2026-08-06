@@ -81,14 +81,15 @@ class SettlementPostgresIT {
         plainA.update("DELETE FROM facilitator.settlement");
         chain = new FakeChainService();
         chain.unspent.put(TestTx.NONCE, TestTx.PAYER_ADDRESS);
-        chain.currentSlot = 500_000L;
+        chain.currentSlot = 999_700L;
         serviceA = service(repoA);
         serviceB = service(repoB);
     }
 
     SettlementService service(SettlementRepository repo) {
         ExactCardanoScheme scheme = new ExactCardanoScheme(chain, chain, new CardanoTransactionDecoder(),
-                List.of(new DefaultTransferVerifier()), 32768);
+                List.of(new DefaultTransferVerifier()), 32768,
+                org.cardanofoundation.x402.facilitator.chain.ShelleyNetworkClock.forNetwork("cardano:preprod", null));
         return new SettlementService(repo, scheme, chain, new CardanoTransactionDecoder(),
                 new SettlementService.Config(Duration.ofSeconds(2), 1, false, false,
                         Duration.ofMinutes(10), Duration.ofSeconds(2)),

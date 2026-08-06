@@ -28,7 +28,7 @@ public class FakeChainService implements FacilitatorChainService, ProtocolParams
     public final Map<String, UtxoState> overrides = new HashMap<>();
     /** per-hash inclusion depth override; falls back to includedDepth. */
     public final Map<String, Integer> inclusionDepthByHash = new HashMap<>();
-    public long currentSlot = 500_000L;
+    public long currentSlot = 999_700L; // fixture ttl 1_000_000 sits 300 slots ahead: inside rule 7's maxTimeoutSeconds window
     public BigInteger coinsPerUtxoByte = BigInteger.valueOf(4310);
     public int maxTxSize = 16384;
     public boolean throwOnLookup = false;

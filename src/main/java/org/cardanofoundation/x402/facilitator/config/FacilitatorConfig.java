@@ -93,7 +93,8 @@ public class FacilitatorConfig {
         for (X402Properties.NetworkEntry entry : props.networks()) {
             ChainBackendFactory.ChainBackend backend = chainBackends.get(entry.id());
             ExactCardanoScheme scheme = new ExactCardanoScheme(
-                    backend.chainService(), backend.paramsProvider(), decoder, methodVerifiers, maxTxBytes);
+                    backend.chainService(), backend.paramsProvider(), decoder, methodVerifiers, maxTxBytes,
+                    backend.networkClock());
             SettlementService settlement = new SettlementService(
                     settlementRepository, scheme, backend.chainService(), decoder,
                     settleConfig, facilitatorClock);

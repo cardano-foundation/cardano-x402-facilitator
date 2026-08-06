@@ -26,7 +26,17 @@ class X402FacilitatorRegistryTest {
         X402FacilitatorRegistry reg = new X402FacilitatorRegistry();
         reg.register("cardano:preprod", exact);
         SupportedResponse s = reg.supported();
-        assertThat(s.kinds()).containsExactly(new SupportedKind(2, "exact", "cardano:preprod"));
+        // The advertised capabilities are the contract a resource server checks
+        // its selected policies against, so assert them rather than echo them.
+        java.util.Map<String, Object> expectedExtra = new java.util.LinkedHashMap<>();
+        expectedExtra.put("assetTransferMethods", java.util.List.of("default", "masumi", "script"));
+        expectedExtra.put("settlementLayers", java.util.List.of("l1"));
+        expectedExtra.put("areFeesSponsored", false);
+        expectedExtra.put("submissionModes", java.util.List.of("server"));
+        expectedExtra.put("l1Confirmations", java.util.Map.of(
+                "server", java.util.Map.of("minimum", 0, "maximum", 20)));
+        assertThat(s.kinds())
+                .containsExactly(new SupportedKind(2, "exact", "cardano:preprod", expectedExtra));
         assertThat(s.extensions()).isEmpty();
         assertThat(s.signers()).containsEntry("cardano:*", java.util.List.of());
     }

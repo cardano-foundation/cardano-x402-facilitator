@@ -16,6 +16,7 @@ public final class ErrorCodes {
     public static final String INVALID_SIGNATURE = INVALID_PAYLOAD + "_invalid_signature";
     public static final String TTL_EXPIRED = INVALID_PAYLOAD + "_ttl_expired";
     public static final String NOT_YET_VALID = INVALID_PAYLOAD + "_not_yet_valid";
+    public static final String TTL_TOO_FAR = INVALID_PAYLOAD + "_ttl_too_far";
     public static final String NONCE_INVALID = INVALID_PAYLOAD + "_nonce_invalid";
     public static final String NONCE_NOT_IN_INPUTS = INVALID_PAYLOAD + "_nonce_not_in_inputs";
     public static final String NONCE_NOT_ON_CHAIN = INVALID_PAYLOAD + "_nonce_not_on_chain";
@@ -40,6 +41,20 @@ public final class ErrorCodes {
     public static final String MASUMI_MIN_UTXO = INVALID_PAYLOAD + "_masumi_min_utxo";
     public static final String MASUMI_REFERENCE_SCRIPT = INVALID_PAYLOAD + "_masumi_reference_script";
     public static final String MASUMI_ASSET = INVALID_PAYLOAD + "_masumi_asset";
+    /** The request commitment does not recompute, or terms.inputHash disagrees with it. */
+    /** The Masumi extra block is not shaped as the spec requires. */
+    public static final String MASUMI_SCHEMA = "invalid_exact_cardano_requirements_masumi_schema";
+    /** extra carries a malformed submission or confirmation policy. */
+    public static final String REQUIREMENTS_POLICY = "invalid_exact_cardano_requirements_policy";
+    /** payload.submissionMode is not admitted by the declared submissionPolicy. */
+    public static final String SUBMISSION_MODE_MISMATCH = INVALID_PAYLOAD + "_submission_mode_mismatch";
+    /** The selected submission mode is not one this facilitator can honour. */
+    public static final String SUBMISSION_MODE_UNSUPPORTED = INVALID_PAYLOAD + "_submission_mode_unsupported";
+    /** blockchainIdentifier is unusable or names a different escrow. */
+    public static final String MASUMI_IDENTIFIER = "invalid_exact_cardano_requirements_masumi_identifier";
+    public static final String MASUMI_COMMITMENT = "invalid_exact_cardano_requirements_masumi_commitment";
+    /** The seller's CIP-8 authorization over termsDigest does not verify. */
+    public static final String MASUMI_AUTHORIZATION = "invalid_exact_cardano_requirements_masumi_schema";
 
     // script assetTransferMethod
     public static final String SCRIPT_ADDRESS_MISMATCH = INVALID_PAYLOAD + "_script_address_mismatch";
