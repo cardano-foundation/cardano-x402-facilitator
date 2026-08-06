@@ -89,7 +89,10 @@ public class FacilitatorConfig {
                                             Clock facilitatorClock) {
         int maxTxBytes = props.verification() == null ? 32768 : props.verification().maxTxBytesOrDefault();
         SettlementService.Config settleConfig = settlementConfig(props);
-        X402FacilitatorRegistry registry = new X402FacilitatorRegistry();
+        // `/supported` must describe the settlement this operator will actually
+        // perform, so the advertised l1Confirmations floor follows the same
+        // accept-mempool switch that settle() enforces.
+        X402FacilitatorRegistry registry = new X402FacilitatorRegistry(settleConfig.acceptMempool());
         for (X402Properties.NetworkEntry entry : props.networks()) {
             ChainBackendFactory.ChainBackend backend = chainBackends.get(entry.id());
             ExactCardanoScheme scheme = new ExactCardanoScheme(

@@ -50,6 +50,10 @@ public final class ErrorCodes {
     public static final String SUBMISSION_MODE_MISMATCH = INVALID_PAYLOAD + "_submission_mode_mismatch";
     /** The selected submission mode is not one this facilitator can honour. */
     public static final String SUBMISSION_MODE_UNSUPPORTED = INVALID_PAYLOAD + "_submission_mode_unsupported";
+    /** Client submission claimed, but the chain has no record of the transaction. */
+    public static final String EVIDENCE_MISSING = INVALID_PAYLOAD + "_evidence_mismatch";
+    /** A client-submitted payment carries script witnesses and could land phase-2 invalid. */
+    public static final String CLIENT_SCRIPT_EXECUTION = INVALID_PAYLOAD + "_phase2_invalid";
     /** blockchainIdentifier is unusable or names a different escrow. */
     public static final String MASUMI_IDENTIFIER = "invalid_exact_cardano_requirements_masumi_identifier";
     public static final String MASUMI_COMMITMENT = "invalid_exact_cardano_requirements_masumi_commitment";

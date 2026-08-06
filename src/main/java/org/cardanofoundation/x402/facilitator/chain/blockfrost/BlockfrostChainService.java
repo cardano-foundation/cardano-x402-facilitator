@@ -30,30 +30,41 @@ public class BlockfrostChainService implements FacilitatorChainService {
 
     private final BackendService backend;
     private final Duration pollInterval;
+    /** Base URL and key for the two queries the backend interface does not expose. */
+    private final String baseUrl;
+    private final String projectId;
     private volatile long lastProbeMillis;
     private volatile boolean lastProbeOk;
+
+    private static final java.util.regex.Pattern TX_HASH =
+            java.util.regex.Pattern.compile("^[0-9a-fA-F]{64}$");
+    private static final Duration MEMPOOL_TIMEOUT = Duration.ofSeconds(10);
 
     @Override
     public UtxoState getUtxoState(String txHashHex, int index) {
         try {
             Result<Utxo> outputRes = backend.getUtxoService().getTxOutput(txHashHex, index);
             if (!outputRes.isSuccessful()) {
-                if (outputRes.code() == 404) return new UtxoState.Spent(); // never existed = not in live set
+                // Never created: no owner to report.
+                if (outputRes.code() == 404) return new UtxoState.Spent(null);
                 throw new ChainLookupException("Blockfrost getTxOutput failed: " + outputRes.getResponse());
             }
+            // The producing transaction names the owner whether or not the output
+            // still exists, which is what lets client-submitted payments resolve a
+            // payer from a nonce their own transaction already consumed.
             String owner = outputRes.getValue().getAddress();
             for (int page = 1; ; page++) {
                 Result<List<Utxo>> pageRes = backend.getUtxoService().getUtxos(owner, 100, page);
                 if (!pageRes.isSuccessful()) {
-                    if (pageRes.code() == 404) return new UtxoState.Spent(); // address has no UTxOs
+                    if (pageRes.code() == 404) return new UtxoState.Spent(owner); // address has no UTxOs
                     throw new ChainLookupException("Blockfrost getUtxos failed: " + pageRes.getResponse());
                 }
                 List<Utxo> utxos = pageRes.getValue();
-                if (utxos == null || utxos.isEmpty()) return new UtxoState.Spent();
+                if (utxos == null || utxos.isEmpty()) return new UtxoState.Spent(owner);
                 boolean present = utxos.stream().anyMatch(u ->
                         u.getTxHash().equalsIgnoreCase(txHashHex) && u.getOutputIndex() == index);
                 if (present) return new UtxoState.Unspent(owner);
-                if (utxos.size() < 100) return new UtxoState.Spent();
+                if (utxos.size() < 100) return new UtxoState.Spent(owner);
             }
         } catch (ChainLookupException e) {
             throw e;
@@ -97,19 +108,58 @@ public class BlockfrostChainService implements FacilitatorChainService {
         try {
             Result<TransactionContent> res = backend.getTransactionService().getTransaction(txHashHex);
             if (!res.isSuccessful()) {
-                if (res.code() == 404) return new InclusionResult.NotSeen();
+                // Not in a block. It may still be in a mempool, which is the
+                // `-1` evidence level and the only thing a just-broadcast
+                // client-submitted payment can offer.
+                if (res.code() == 404) return inMempool(txHashHex)
+                        ? new InclusionResult.Mempool()
+                        : new InclusionResult.NotSeen();
                 throw new ChainLookupException("Blockfrost getTransaction failed: " + res.getResponse());
             }
             TransactionContent tx = res.getValue();
             Result<Block> latest = backend.getBlockService().getLatestBlock();
             if (!latest.isSuccessful())
                 throw new ChainLookupException("Blockfrost latest block: " + latest.getResponse());
-            long depth = latest.getValue().getHeight() - tx.getBlockHeight() + 1;
-            return new InclusionResult.Included((int) Math.max(depth, 1), tx.getSlot(), tx.getBlock());
+            // `l1Confirmations` counts blocks NEWER than the containing block, so
+            // a transaction in the tip has depth 0 ("canonical inclusion"), not 1.
+            long depth = latest.getValue().getHeight() - tx.getBlockHeight();
+            return new InclusionResult.Included((int) Math.max(depth, 0), tx.getSlot(), tx.getBlock());
         } catch (ChainLookupException e) {
             throw e;
         } catch (Exception e) {
             throw new ChainLookupException("Blockfrost inclusion lookup failed", e);
+        }
+    }
+
+    /**
+     * Whether a node is holding this transaction in its mempool.
+     *
+     * <p>Not on the backend interface, so it goes over raw HTTP. A provider
+     * fault answers "no" rather than throwing: mempool presence only ever
+     * strengthens the evidence, and an outage must not turn a confirmed payment
+     * into a lookup failure.
+     *
+     * @param txHashHex the transaction id.
+     * @return true when the provider reports it pending.
+     */
+    private boolean inMempool(String txHashHex) {
+        if (baseUrl == null || !TX_HASH.matcher(txHashHex).matches()) return false;
+        try {
+            java.net.http.HttpRequest request = java.net.http.HttpRequest.newBuilder()
+                    .uri(java.net.URI.create(baseUrl + "mempool/" + txHashHex.toLowerCase()))
+                    .header("project_id", projectId == null ? "" : projectId)
+                    .timeout(MEMPOOL_TIMEOUT)
+                    .GET()
+                    .build();
+            java.net.http.HttpResponse<Void> response = java.net.http.HttpClient.newHttpClient()
+                    .send(request, java.net.http.HttpResponse.BodyHandlers.discarding());
+            return response.statusCode() == 200;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        } catch (Exception e) {
+            log.debug("mempool lookup unavailable for {}: {}", txHashHex, e.getMessage());
+            return false;
         }
     }
 
@@ -121,6 +171,8 @@ public class BlockfrostChainService implements FacilitatorChainService {
             try {
                 last = checkInclusion(txHashHex);
                 if (last instanceof InclusionResult.Included inc && inc.depth() >= minDepth) return last;
+                // Mempool acceptance satisfies -1 and nothing stronger.
+                if (last instanceof InclusionResult.Mempool && minDepth <= -1) return last;
             } catch (ChainLookupException e) {
                 log.debug("transient inclusion lookup failure for {}: {}", txHashHex, e.getMessage());
             }

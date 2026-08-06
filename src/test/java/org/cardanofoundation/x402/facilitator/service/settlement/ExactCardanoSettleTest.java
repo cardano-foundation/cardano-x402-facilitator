@@ -196,7 +196,7 @@ class ExactCardanoSettleTest {
     @Test
     void confirmationTimeoutKeepsRowAndReportsNotConfirmedWithoutStatusClaim() {
         String tx = TestTx.buildBase64(TestTx.Spec.defaults());
-        chain.includedDepth = 0; // never included
+        chain.includedDepth = FakeChainService.NOT_SEEN; // never included
         SettleResponse r = service.settle(payload(tx), requirements());
         assertThat(r.success()).isFalse();
         assertThat(r.errorReason()).isEqualTo(ErrorCodes.SETTLEMENT_NOT_CONFIRMED);
@@ -250,7 +250,7 @@ class ExactCardanoSettleTest {
         String tx = TestTx.buildBase64(TestTx.Spec.defaults());
         SettleResponse first = replaying.settle(payload(tx), requirements());
         assertThat(first.success()).isTrue();
-        chain.includedDepth = 0; // rolled back
+        chain.includedDepth = FakeChainService.NOT_SEEN; // rolled back
         SettleResponse replayed = replaying.settle(payload(tx), requirements());
         assertThat(replayed.success()).isFalse();
         assertThat(replayed.errorReason()).isEqualTo(ErrorCodes.SETTLEMENT_NOT_CONFIRMED);
@@ -261,7 +261,7 @@ class ExactCardanoSettleTest {
     @Test
     void duplicateProbeLookupErrorPreservesState() {
         String tx = TestTx.buildBase64(TestTx.Spec.defaults());
-        chain.includedDepth = 0;
+        chain.includedDepth = FakeChainService.NOT_SEEN;
         SettleResponse first = service.settle(payload(tx), requirements()); // -> NOT_CONFIRMED
         assertThat(first.errorReason()).isEqualTo(ErrorCodes.SETTLEMENT_NOT_CONFIRMED);
         chain.throwOnInclusionCheck = true;
@@ -325,8 +325,8 @@ class ExactCardanoSettleTest {
                 Instant.now().minus(Duration.ofHours(30)));
 
         chain.inclusionDepthByHash.put(h1, 2);
-        chain.inclusionDepthByHash.put(h2, 0);
-        chain.inclusionDepthByHash.put(h3, 0);
+        chain.inclusionDepthByHash.put(h2, FakeChainService.NOT_SEEN);
+        chain.inclusionDepthByHash.put(h3, FakeChainService.NOT_SEEN);
         chain.currentSlot = 10_000L; // > h2 ttl 100 + margin
 
         reconciler.sweep();
@@ -335,7 +335,7 @@ class ExactCardanoSettleTest {
         assertThat(repo.find(h3).orElseThrow().status()).isEqualTo(SettlementRecord.Status.EXPIRED);
 
         // rollback: recent CONFIRMED not on chain anymore -> demote
-        chain.inclusionDepthByHash.put(h1, 0);
+        chain.inclusionDepthByHash.put(h1, FakeChainService.NOT_SEEN);
         reconciler.sweep();
         assertThat(repo.find(h1).orElseThrow().status()).isEqualTo(SettlementRecord.Status.SUBMITTED);
     }

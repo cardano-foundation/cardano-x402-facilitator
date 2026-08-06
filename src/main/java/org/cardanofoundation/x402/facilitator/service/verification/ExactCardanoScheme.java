@@ -11,6 +11,7 @@ import org.cardanofoundation.x402.facilitator.chain.FacilitatorChainService;
 import org.cardanofoundation.x402.facilitator.chain.NetworkClock;
 import org.cardanofoundation.x402.facilitator.chain.ProtocolParamsProvider;
 import org.cardanofoundation.x402.facilitator.model.ErrorCodes;
+import org.cardanofoundation.x402.facilitator.model.chain.InclusionResult;
 import org.cardanofoundation.x402.facilitator.model.chain.UtxoState;
 import org.cardanofoundation.x402.facilitator.model.protocol.PaymentPayload;
 import org.cardanofoundation.x402.facilitator.model.protocol.PaymentRequirements;
@@ -116,6 +117,51 @@ public class ExactCardanoScheme {
             if (!tx.signaturesValid())
                 return VerifyResponse.invalid(ErrorCodes.INVALID_SIGNATURE, null, "");
 
+            // Rule 6 (submission check) + Rule 9 (confirmation policy). Both come
+            // from the canonical requirements, never the client-echoed `accepted`:
+            // the policy is the server's to set, not the payer's to choose.
+            String submissionPolicy = CardanoPolicies.submissionPolicy(requirements.extra());
+            Integer requiredConfirmations = CardanoPolicies.l1Confirmations(requirements.extra());
+            if (submissionPolicy == null || requiredConfirmations == null)
+                return VerifyResponse.invalid(ErrorCodes.REQUIREMENTS_POLICY, null, "");
+            String submissionMode = CardanoPolicies.submissionMode(payload.payload());
+            if (submissionMode == null || !CardanoPolicies.modeAllowed(submissionPolicy, submissionMode))
+                return VerifyResponse.invalid(ErrorCodes.SUBMISSION_MODE_MISMATCH, null, "");
+            boolean clientSubmitted = CardanoPolicies.SUBMISSION_CLIENT.equals(submissionMode);
+
+            // In client mode the facilitator never broadcasts — it authenticates
+            // evidence that the ledger already accepted this exact transaction.
+            // The evidence is keyed by transaction id, which binds it to these
+            // bytes, so it cannot be borrowed from some other payment.
+            InclusionResult evidence = null;
+            if (clientSubmitted) {
+                // The `is_valid` flag lives OUTSIDE the transaction body, so it is
+                // not covered by the transaction id: a client can broadcast the
+                // failing form and hand over an identical payload claiming valid.
+                // Evidence keyed by that id would then point at a transaction that
+                // consumed collateral and created none of its outputs. Only a
+                // script-running transaction can be phase-2 invalid at all, so
+                // refusing script witnesses closes the hole without trusting the
+                // provider to report it. A payment pays *to* addresses and never
+                // needs one.
+                if (tx.scriptWitnessCount() > 0)
+                    return VerifyResponse.invalid(ErrorCodes.CLIENT_SCRIPT_EXECUTION,
+                            "client-submitted payments must not run scripts; such a transaction "
+                                    + "can land phase-2 invalid and create no outputs", "");
+                try {
+                    evidence = chain.checkInclusion(tx.txHashHex().toLowerCase());
+                } catch (RuntimeException e) {
+                    return VerifyResponse.invalid(ErrorCodes.CHAIN_LOOKUP_FAILED, e.getMessage(), "");
+                }
+                if (evidence instanceof InclusionResult.NotSeen)
+                    return VerifyResponse.invalid(ErrorCodes.EVIDENCE_MISSING,
+                            "the chain has no record of this transaction", "");
+            }
+            // Once the ledger has accepted the transaction, the deadline rules
+            // below describe a decision the chain has already made. Re-imposing
+            // them would reject a payment that demonstrably settled.
+            boolean acceptedByLedger = evidence != null;
+
             // Stage C — time & protocol limits
             if (tx.ttlSlot() != null || tx.validityStartSlot() != null) {
                 long currentSlot;
@@ -124,7 +170,7 @@ public class ExactCardanoScheme {
                 } catch (RuntimeException e) {
                     return VerifyResponse.invalid(ErrorCodes.CHAIN_LOOKUP_FAILED, e.getMessage(), "");
                 }
-                if (tx.ttlSlot() != null && tx.ttlSlot() <= currentSlot)
+                if (!acceptedByLedger && tx.ttlSlot() != null && tx.ttlSlot() <= currentSlot)
                     return VerifyResponse.invalid(ErrorCodes.TTL_EXPIRED, null, "");
                 // Rule 7 upper bound: a TTL further ahead than maxTimeoutSeconds
                 // would hold the payment open past the window the server quoted.
@@ -151,24 +197,6 @@ public class ExactCardanoScheme {
                         "transaction size " + tx.serializedSize() + " exceeds protocol maxTxSize "
                                 + pp.maxTxSize(), "");
 
-            // Rule 6 (submission check) + Rule 9 (confirmation policy). Both come
-            // from the canonical requirements, never the client-echoed `accepted`:
-            // the policy is the server's to set, not the payer's to choose.
-            String submissionPolicy = CardanoPolicies.submissionPolicy(requirements.extra());
-            Integer requiredConfirmations = CardanoPolicies.l1Confirmations(requirements.extra());
-            if (submissionPolicy == null || requiredConfirmations == null)
-                return VerifyResponse.invalid(ErrorCodes.REQUIREMENTS_POLICY, null, "");
-            String submissionMode = CardanoPolicies.submissionMode(payload.payload());
-            if (submissionMode == null || !CardanoPolicies.modeAllowed(submissionPolicy, submissionMode))
-                return VerifyResponse.invalid(ErrorCodes.SUBMISSION_MODE_MISMATCH, null, "");
-            // Client mode means authenticating a transaction this facilitator never
-            // broadcast. Without that evidence path, accepting the mode would report
-            // a settlement nobody verified — so it fails closed rather than quietly
-            // degrading to server submission.
-            if (CardanoPolicies.SUBMISSION_CLIENT.equals(submissionMode))
-                return VerifyResponse.invalid(ErrorCodes.SUBMISSION_MODE_UNSUPPORTED,
-                        "client submission requires authenticated settlement evidence", "");
-
             // Stage D — replay protection (chain UTxO set)
             String nonceLower = normalizeNonce(nonce);
             if (!tx.inputs().contains(nonceLower))
@@ -190,11 +218,30 @@ public class ExactCardanoScheme {
                 return VerifyResponse.invalid(ErrorCodes.CHAIN_LOOKUP_FAILED,
                         "input state unknown (indexer sync horizon)", "");
             UtxoState nonceState = states.get(nonceLower);
-            if (!(nonceState instanceof UtxoState.Unspent nonceUnspent))
-                return VerifyResponse.invalid(ErrorCodes.NONCE_NOT_ON_CHAIN, null, "");
-            String payer = nonceUnspent.ownerAddress();
-            if (states.values().stream().anyMatch(s -> s instanceof UtxoState.Spent))
-                return VerifyResponse.invalid(ErrorCodes.INPUT_NOT_AVAILABLE, null, payer);
+            // The nonce must still be unspent — UNLESS this payment is what spent
+            // it. In client mode the transaction is already on the chain, so its
+            // own inputs are gone by definition; requiring them unspent would
+            // reject exactly the payments that settled. The evidence checked
+            // above is what stands in for the unspent-input guarantee there.
+            String payer;
+            if (acceptedByLedger) {
+                payer = switch (nonceState) {
+                    case UtxoState.Unspent unspent -> unspent.ownerAddress();
+                    case UtxoState.Spent spent -> spent.ownerAddress();
+                    default -> null;
+                };
+                // An output that never existed reports no owner. Without a payer
+                // the Masumi buyer binding below has nothing to compare against.
+                if (payer == null || payer.isEmpty())
+                    return VerifyResponse.invalid(ErrorCodes.NONCE_NOT_ON_CHAIN,
+                            "could not resolve the owner of the nonce UTXO", "");
+            } else {
+                if (!(nonceState instanceof UtxoState.Unspent nonceUnspent))
+                    return VerifyResponse.invalid(ErrorCodes.NONCE_NOT_ON_CHAIN, null, "");
+                payer = nonceUnspent.ownerAddress();
+                if (states.values().stream().anyMatch(s -> s instanceof UtxoState.Spent))
+                    return VerifyResponse.invalid(ErrorCodes.INPUT_NOT_AVAILABLE, null, payer);
+            }
 
             // D5 — payer authorization
             Optional<String> payerError = checkPayerAuthorization(payer, tx);

@@ -32,12 +32,24 @@ class X402FacilitatorRegistryTest {
         expectedExtra.put("assetTransferMethods", java.util.List.of("default", "masumi", "script"));
         expectedExtra.put("settlementLayers", java.util.List.of("l1"));
         expectedExtra.put("areFeesSponsored", false);
-        expectedExtra.put("submissionModes", java.util.List.of("server"));
-        expectedExtra.put("l1Confirmations", java.util.Map.of(
-                "server", java.util.Map.of("minimum", 0, "maximum", 20)));
+        expectedExtra.put("submissionModes", java.util.List.of("server", "client"));
+        // No mempool opt-in, so the floor is canonical inclusion for both modes.
+        java.util.Map<String, Object> range = java.util.Map.of("minimum", 0, "maximum", 20);
+        expectedExtra.put("l1Confirmations", java.util.Map.of("server", range, "client", range));
         assertThat(s.kinds())
                 .containsExactly(new SupportedKind(2, "exact", "cardano:preprod", expectedExtra));
         assertThat(s.extensions()).isEmpty();
         assertThat(s.signers()).containsEntry("cardano:*", java.util.List.of());
+    }
+
+    @Test void advertisedConfirmationFloorFollowsTheMempoolOptIn() {
+        // A facilitator that will settle on mempool evidence must say so, or a
+        // resource server can never quote the -1 the operator enabled.
+        X402FacilitatorRegistry reg = new X402FacilitatorRegistry(true);
+        reg.register("cardano:preprod", exact);
+        java.util.Map<?, ?> extra = (java.util.Map<?, ?>) reg.supported().kinds().get(0).extra();
+        java.util.Map<?, ?> ranges = (java.util.Map<?, ?>) extra.get("l1Confirmations");
+        assertThat(((java.util.Map<?, ?>) ranges.get("server")).get("minimum")).isEqualTo(-1);
+        assertThat(((java.util.Map<?, ?>) ranges.get("client")).get("minimum")).isEqualTo(-1);
     }
 }

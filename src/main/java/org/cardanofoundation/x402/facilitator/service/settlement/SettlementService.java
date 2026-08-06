@@ -88,6 +88,29 @@ public class SettlementService {
             return SettleResponse.fail(ErrorCodes.DUPLICATE_SETTLEMENT, null, network);
         }
 
+        // Rule 9: the depth comes from the 402's confirmationPolicy, not the
+        // operator's default. A server that quoted `l1Confirmations: 2` must not
+        // release on one, and one that quoted 0 should not be made to wait for
+        // the operator's preferred depth.
+        Integer declared = org.cardanofoundation.x402.facilitator.service.verification.CardanoPolicies
+                .l1Confirmations(requirements.extra());
+        int requiredDepth = declared != null ? declared : config.confirmationDepth();
+
+        // Client mode: the payer already broadcast. Submitting again is not a
+        // harmless retry — the transaction is on the network, so this side must
+        // authenticate it and wait for the agreed depth instead. verify() above
+        // has already established that the chain has a record of these bytes.
+        String submissionMode = org.cardanofoundation.x402.facilitator.service.verification.CardanoPolicies
+                .submissionMode(payload.payload());
+        if (org.cardanofoundation.x402.facilitator.service.verification.CardanoPolicies.SUBMISSION_CLIENT
+                .equals(submissionMode)) {
+            if (!repo.casTransition(txHash, attemptId, Status.CLAIMED, Status.SUBMITTED,
+                    Map.of("submitted_at", clock.instant()))) {
+                return SettleResponse.fail(ErrorCodes.DUPLICATE_SETTLEMENT, null, network);
+            }
+            return awaitAndRecord(txHash, attemptId, requiredDepth, network, payer);
+        }
+
         // Step 4 — SUBMITTING persisted BEFORE any wire I/O
         if (!repo.casTransition(txHash, attemptId, Status.CLAIMED, Status.SUBMITTING, Map.of())) {
             return SettleResponse.fail(ErrorCodes.DUPLICATE_SETTLEMENT, null, network);
@@ -117,37 +140,67 @@ public class SettlementService {
             }
         }
 
-        // Rule 9: the depth comes from the 402's confirmationPolicy, not the
-        // operator's default. A server that quoted `l1Confirmations: 2` must not
-        // release on one, and one that quoted 0 should not be made to wait for
-        // the operator's preferred depth.
-        Integer declared = org.cardanofoundation.x402.facilitator.service.verification.CardanoPolicies
-                .l1Confirmations(requirements.extra());
-        int requiredDepth = declared != null ? declared : config.confirmationDepth();
+        return awaitAndRecord(txHash, attemptId, requiredDepth, network, payer);
+    }
 
-        // accept-mempool fast path: only when the payment itself accepts mempool
-        // evidence (-1). Opting in operator-side must not weaken a stricter 402.
-        if (config.acceptMempool() && requiredDepth <= -1) {
-            return SettleResponse.ok(txHash, network, payer, "mempool");
+    /**
+     * Waits for the payment to reach the depth the 402 asked for, then records
+     * the outcome. Shared by both submission modes: only who broadcast differs,
+     * not what counts as settled.
+     *
+     * @param txHash        the settled transaction id.
+     * @param attemptId     fencing token for this attempt's state transitions.
+     * @param requiredDepth the 402's `l1Confirmations`.
+     * @param network       the payment network.
+     * @param payer         the resolved payer address.
+     * @return the settle response to return to the caller.
+     */
+    private SettleResponse awaitAndRecord(String txHash, UUID attemptId, int requiredDepth,
+                                          String network, String payer) {
+        // Mempool evidence settles a payment only when the payment asked for it
+        // (-1) AND the operator opted in. Either alone is not enough: an
+        // operator's convenience must not weaken a stricter 402, and a 402
+        // cannot force an operator to accept reversible evidence.
+        if (requiredDepth <= -1) {
+            if (!config.acceptMempool()) {
+                return SettleResponse.fail(ErrorCodes.SETTLEMENT_NOT_CONFIRMED,
+                        "this facilitator does not settle on mempool evidence", network);
+            }
+            InclusionResult seen = chain.awaitInclusion(txHash, -1, config.confirmationTimeout());
+            if (seen instanceof InclusionResult.Included included) {
+                return recordConfirmed(txHash, attemptId, included, network, payer);
+            }
+            if (seen instanceof InclusionResult.Mempool) {
+                return SettleResponse.ok(txHash, network, payer, "mempool");
+            }
+            repo.casTransition(txHash, attemptId, Status.SUBMITTED, Status.NOT_CONFIRMED, Map.of());
+            return SettleResponse.failWithTx(ErrorCodes.SETTLEMENT_NOT_CONFIRMED, txHash, network,
+                    payer, null);
         }
 
-        // Step 5 — await inclusion at the configured depth
-        InclusionResult inclusion = chain.awaitInclusion(txHash, Math.max(0, requiredDepth),
+        // Step 5 — await inclusion at the depth the payment demanded
+        InclusionResult inclusion = chain.awaitInclusion(txHash, requiredDepth,
                 config.confirmationTimeout());
         if (inclusion instanceof InclusionResult.Included included
-                && included.depth() >= Math.max(0, requiredDepth)) {
-            SettleResponse ok = SettleResponse.ok(txHash, network, payer, "confirmed");
-            repo.casTransition(txHash, attemptId, Status.SUBMITTED, Status.CONFIRMED, Map.of(
-                    "confirmed_at", clock.instant(),
-                    "confirmed_slot", included.slot(),
-                    "confirmed_block", included.blockHash(),
-                    "response_json", toJson(ok)));
-            return ok;
+                && included.depth() >= requiredDepth) {
+            return recordConfirmed(txHash, attemptId, included, network, payer);
         }
 
         // Step 6 — not confirmed in time: row kept (NOT_CONFIRMED), no extra.status claim
         repo.casTransition(txHash, attemptId, Status.SUBMITTED, Status.NOT_CONFIRMED, Map.of());
         return SettleResponse.failWithTx(ErrorCodes.SETTLEMENT_NOT_CONFIRMED, txHash, network, payer, null);
+    }
+
+    private SettleResponse recordConfirmed(String txHash, UUID attemptId,
+                                           InclusionResult.Included included, String network,
+                                           String payer) {
+        SettleResponse ok = SettleResponse.ok(txHash, network, payer, "confirmed");
+        repo.casTransition(txHash, attemptId, Status.SUBMITTED, Status.CONFIRMED, Map.of(
+                "confirmed_at", clock.instant(),
+                "confirmed_slot", included.slot(),
+                "confirmed_block", included.blockHash(),
+                "response_json", toJson(ok)));
+        return ok;
     }
 
     /** @return a short-circuit response, or null to proceed with a fresh attempt. */

@@ -40,7 +40,8 @@ public class ChainBackendFactory {
         Duration pollInterval = props.settle() == null
                 ? Duration.ofSeconds(3) : props.settle().pollIntervalOrDefault();
         return new ChainBackend(
-                new BlockfrostChainService(backend, pollInterval),
+                new BlockfrostChainService(backend, pollInterval, baseUrl,
+                        bf.projectId() == null ? "" : bf.projectId()),
                 new BlockfrostProtocolParamsProvider(backend),
                 clock);
     }
