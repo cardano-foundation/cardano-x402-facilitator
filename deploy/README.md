@@ -59,19 +59,10 @@ application.
 
 ## Verification coverage
 
-All x402 Cardano verifications are implemented and unit-tested:
-
-- **default** (address-to-address) — asset/amount/recipient/min-UTxO, tri-state
-  UTxO replay protection, payer-witness authorization.
-- **masumi** (`vested_pay` escrow lock) — the full M1–M9 rule set: contract
-  address (+ optional per-network script-hash allowlist), inline datum present /
-  no reference script, `FundsLocked` structural invariants, deadline, collateral
-  bounds, exact asset set, post-result min-UTxO, and datum field matching.
-- **script** — S1 address reconstruction from `scriptHash` or `script`+parameters
-  (aiken UPLC apply-params, verified byte-for-byte against known-good vectors
-  for both empty-params and parametrized cases), and an S3 Plutus-version-aware
-  datum policy (V1 → datum hash; V2 → inline or hash; V3 → configurable; unknown
-  → some datum).
+All three transfer methods (`default`, `masumi`, `script`) and both submission
+modes are implemented and unit-tested. The rules, in order and with their error
+codes, are in [docs/verification.md](../docs/verification.md) — not repeated here,
+because a second copy is a copy that goes stale.
 
 ## Hardening
 
@@ -115,9 +106,9 @@ service itself — see that service's block in `deploy/docker-compose.yml`.
 ## Mainnet readiness checklist
 
 - [ ] Set `x402.networks[].id: cardano:mainnet` and `YACI_PROTOCOL_MAGIC=764824073`.
-- [ ] Configure `x402.masumi.allowed-script-hashes.cardano:mainnet` with the
-      deployment's genuine `vested_pay` escrow script hash (enforcement is
-      active only when the allowlist is set).
+- [ ] Configure `x402.masumi.allowed-script-hashes.cardano:mainnet` with your
+      deployment's `vested_pay` escrow script hash, to serve only that one. The
+      address is derived and checked regardless; the allowlist narrows it.
 - [ ] Enable API keys and a rate limit; put the facilitator behind TLS.
 - [ ] Confirm `x402.settle.accept-mempool=false` (never grant on mempool).
 - [ ] Review `x402.settle.confirmation-depth` (raise above 1 for higher-value flows).

@@ -15,12 +15,16 @@ the payer already signed, and submits them. It cannot move funds on its own.
 
 ## Status
 
-Implemented and unit-tested (132 tests, all green), proven end-to-end on
+Implemented and unit-tested (166 tests, all green), proven end-to-end on
 **preprod** with a real on-chain transaction. Nothing has run against mainnet —
 see the [mainnet checklist](deploy/README.md#mainnet-readiness-checklist) before
-you consider it. Running against a standalone yaci-store reuses the same,
-on-chain-proven Blockfrost HTTP client, just pointed at a different
-`BLOCKFROST_BASE_URL`; running the full self-hosted stack
+you consider it.
+
+The on-chain proof covers **server submission**. Client submission — inclusion
+and mempool evidence, settling without re-broadcasting — is unit-tested but has
+not been exercised against a real provider. Running against a standalone
+yaci-store reuses the same, on-chain-proven Blockfrost HTTP client, just pointed
+at a different `BLOCKFROST_BASE_URL`; running the full self-hosted stack
 (`deploy/docker-compose.yml`'s `full` profile) is not exercised in CI.
 
 ## Features
@@ -69,8 +73,13 @@ Check it's serving:
 
 ```bash
 curl localhost:4022/supported
-# {"kinds":[{"x402Version":2,"scheme":"exact","network":"cardano:preprod"}],...}
+# {"kinds":[{"x402Version":2,"scheme":"exact","network":"cardano:preprod",
+#            "extra":{"assetTransferMethods":["default","masumi","script"],
+#                     "submissionModes":["server","client"], ...}}], ...}
 ```
+
+The `extra` block is the capability contract a resource server checks its
+policies against before serving a 402 — see [docs/api.md](docs/api.md#get-supported).
 
 Then prove it works against the real chain — build, sign, verify, settle, and
 independently confirm on-chain:
@@ -153,7 +162,7 @@ unless you opt in. Full reference: [docs/configuration.md](docs/configuration.md
 ```bash
 export JAVA_HOME=/Library/Java/JavaVirtualMachines/temurin-21.jdk/Contents/Home
 
-./gradlew test        # 132 tests (Docker needed for the Postgres IT)
+./gradlew test        # 166 tests (Docker needed for the Postgres IT)
 ./gradlew bootRun     # run locally
 ./gradlew e2e         # on-chain proof; facilitator must be running
 ```
@@ -174,9 +183,10 @@ touching it.
 - The facilitator holds **no keys** and signs nothing.
 - `/verify` and `/settle` are **unauthenticated** unless you set
   `x402.security.api-keys`. Put it behind TLS.
-- The `masumi` script-hash allowlist is **inactive until configured**; without it
-  the escrow method trusts the address in the requirements. Set it before
-  mainnet.
+- The `masumi` escrow address is **derived** from the deployment parameters and
+  `payTo` must equal it, so a hostile address fails regardless of configuration.
+  The script-hash allowlist narrows that further to deployments you nominate, and
+  is inactive until configured — set it before mainnet.
 - The E2E test class carries **throwaway preprod credentials** as overridable
   defaults — testnet-only, a documented deviation, and to be rotated. Never point
   it at mainnet.

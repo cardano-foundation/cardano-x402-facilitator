@@ -285,8 +285,19 @@ Every value below is a stable code returned in `invalidReason` /
 
 | Code | Meaning |
 |---|---|
-| `invalid_exact_cardano_payload_ttl_expired` | `validTo` already passed |
+| `invalid_exact_cardano_payload_ttl_expired` | `validTo` already passed — not applied once inclusion evidence proves the ledger accepted the tx |
 | `invalid_exact_cardano_payload_not_yet_valid` | `validFrom` in the future |
+| `invalid_exact_cardano_payload_ttl_too_far` | TTL further ahead than `maxTimeoutSeconds` allows |
+
+### Submission mode and evidence
+
+| Code | Meaning |
+|---|---|
+| `invalid_exact_cardano_requirements_policy` | `extra` carries a malformed `submissionPolicy` or `confirmationPolicy` |
+| `invalid_exact_cardano_payload_submission_mode_mismatch` | `payload.submissionMode` is not admitted by the declared policy |
+| `invalid_exact_cardano_payload_submission_mode_unsupported` | The selected mode is not one this facilitator can honour |
+| `invalid_exact_cardano_payload_evidence_mismatch` | Client submission claimed, but the chain has no record of the transaction |
+| `invalid_exact_cardano_payload_phase2_invalid` | A client-submitted payment carries script witnesses and could land phase-2 invalid |
 
 ### Nonce / replay
 
@@ -329,6 +340,15 @@ Every value below is a stable code returned in `invalidReason` /
 | `invalid_exact_cardano_payload_masumi_min_utxo` | Post-result output below min-UTxO |
 | `invalid_exact_cardano_payload_masumi_reference_script` | Reference script attached (forbidden) |
 | `invalid_exact_cardano_payload_masumi_asset` | Locked asset set ≠ required set |
+
+Requirements-level Masumi codes — these reject the **402 itself** as unusable,
+before any transaction is examined:
+
+| Code | Meaning |
+|---|---|
+| `invalid_exact_cardano_requirements_masumi_schema` | `extra` is malformed, or the seller's CIP-8 authorization over `termsDigest` does not verify |
+| `invalid_exact_cardano_requirements_masumi_commitment` | The request commitment does not recompute, or `terms.inputHash` disagrees with it |
+| `invalid_exact_cardano_requirements_masumi_identifier` | `blockchainIdentifier` is unusable or names a different escrow |
 
 ### `script` method
 

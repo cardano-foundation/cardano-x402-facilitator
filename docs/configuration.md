@@ -170,10 +170,12 @@ x402:
 ```
 
 Per-network escrow script-hash allowlist. **Enforcement is active only when the
-list is set and non-empty.** Without it, the `masumi` method only proves the
-output went where the *requirements* said — a resource server naming a hostile
-address still passes. This is the control that closes that gap; set it before
-mainnet.
+list is set and non-empty.**
+
+It is a *narrowing*, not the primary control. The facilitator already derives the
+escrow address from the deployment parameters and rejects a `payTo` that does not
+equal it, so a hostile address fails without any allowlist. Set this when you
+want to serve only your own deployment rather than any valid `vested_pay` one.
 
 ## Security (opt-in)
 

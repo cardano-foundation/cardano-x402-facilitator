@@ -21,29 +21,21 @@ export JAVA_HOME=/Library/Java/JavaVirtualMachines/temurin-21.jdk/Contents/Home
 JAVA_HOME=/Library/Java/JavaVirtualMachines/temurin-21.jdk/Contents/Home ./gradlew test
 ```
 
-132 tests, no network access, no credentials:
+166 tests, no network access, no credentials. The bulk sits in
+`ExactCardanoVerifyTest` (the A–E pipeline), `MasumiTransferVerifierTest`
+(M0–M9), `ExactCardanoSettleTest` (the state machine), `ScriptTransferVerifierTest`,
+and `ClientSubmissionTest` (client vs. server submission).
 
-| Area | Class | # |
-|---|---|---|
-| Verification (A–E) | `ExactCardanoVerifyTest` | 32 |
-| Masumi M1–M9 | `MasumiTransferVerifierTest` | 24 |
-| Settlement | `ExactCardanoSettleTest` | 16 |
-| Script method | `ScriptTransferVerifierTest` | 12 |
-| Script address conformance | `ScriptAddressConformanceTest` | 9 |
-| Controller | `FacilitatorControllerTest` | 6 |
-| Wire shapes | `ProtocolJsonTest` | 6 |
-| Decoder | `CardanoTransactionDecoderTest` | 6 |
-| Guard filter | `ApiGuardFilterTest` | 6 |
-| Settlement gate | `SettlementGateTest` | 5 |
-| Networks | `CardanoNetworksTest` | 4 |
-| Postgres IT | `SettlementPostgresIT` | 3 |
-| Registry | `X402FacilitatorRegistryTest` | 2 |
-| Context | `FacilitatorApplicationTest` | 1 |
+`FakeChainService` (`testutil/`) drives every `UtxoState` / `InclusionResult` /
+`SubmissionResult` branch — including the `Unknown` paths, which are the ones you
+cannot reproduce against a real backend on demand and are exactly where the
+dangerous bugs live. `TestTx` builds transaction fixtures, and `MasumiTestSeller`
+produces genuine CIP-8 authorizations so a Masumi fixture only passes if the
+terms it asserts are terms that seller actually signed.
 
-`FakeChainService` (`testutil/`) drives every `UtxoState` / `SubmissionResult`
-branch — including the `Unknown` paths, which are the ones you cannot reproduce
-against a real backend on demand and are exactly where the dangerous bugs live.
-`TestTx` builds transaction fixtures.
+`FakeChainService.includedDepth` uses the spec's evidence ladder rather than a
+truthiness sentinel: `NOT_SEEN` (-2), `MEMPOOL` (-1), and `>= 0` for canonical
+inclusion with that many newer blocks. Zero means **included**, not absent.
 
 `ScriptAddressConformanceTest` pins aiken UPLC apply-params output byte-for-byte
 against known-good vectors, for both empty and parametrized cases. If it fails
@@ -136,6 +128,10 @@ flow without faucet funds or preprod latency.
   so it isn't exercised end-to-end. The facilitator-side code path is the same
   `BlockfrostChainService` already proven by the on-chain E2E test against
   hosted Blockfrost — only the full stack's integration is unproven.
+- **Client submission on-chain.** `X402PreprodE2E` exercises server submission
+  only. The client-mode paths — inclusion evidence, mempool evidence, and
+  settling without re-broadcasting — are covered against `FakeChainService`, not
+  against a real provider.
 - **Mainnet.** Nothing here has run against mainnet.
 
 ## Before committing
@@ -147,4 +143,4 @@ without it is worthless.
 JAVA_HOME=/Library/Java/JavaVirtualMachines/temurin-21.jdk/Contents/Home ./gradlew test
 ```
 
-Expect `BUILD SUCCESSFUL`, 132 tests, 0 failures.
+Expect `BUILD SUCCESSFUL`, 166 tests, 0 failures.

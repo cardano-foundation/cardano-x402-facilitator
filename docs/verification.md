@@ -185,11 +185,23 @@ No additional checks — address-to-address is fully covered by Stage E.
 ## `masumi` — `vested_pay` escrow
 
 Verifies that funds are locked into the Masumi escrow contract correctly, rather
-than merely sent to its address. Rules M1–M9, in order:
+than merely sent to its address.
+
+**Consent is checked before structure.** A datum matching terms nobody signed is
+worthless, so the seller's authorization is verified first:
 
 | # | Check | Code |
 |---|---|---|
-| M1 | `extra.contractAddress` present and ≡ `payTo` | `..._masumi_contract_mismatch` |
+| M0a | `extra` is shaped as the spec requires (closed object — an unknown field is a rejection) | `..._masumi_schema` |
+| M0b | `inputCommitment` recomputes, and `terms.inputHash` agrees with it | `..._masumi_commitment` |
+| M0c | The seller's CIP-8 `COSE_Sign1` verifies over `termsDigest`, bound to `terms.sellerAddress` by Blake2b-224 | `..._masumi_authorization` |
+| M0d | `blockchainIdentifier`, when present, decodes and names the same escrow | `..._masumi_identifier` |
+
+Then the lock itself, rules M1–M9 in order:
+
+| # | Check | Code |
+|---|---|---|
+| M1 | The escrow address is **derived** from the deployment parameters, and `payTo` must equal it | `..._masumi_contract_mismatch` |
 | M1b | `payTo`'s script hash is in the configured allowlist (if set) | `..._masumi_contract_mismatch` |
 | M2 | An output to `payTo` carries an inline datum | `..._masumi_datum_missing` |
 | — | That output carries **no** reference script | `..._masumi_reference_script` |
@@ -251,11 +263,18 @@ For the genuinely optional fields, an undeclared field is not an assertion, so
 there is nothing to disagree with. Callers that want one enforced must declare
 it.
 
-> **M1b is off unless you configure it.** With no allowlist, M1 only proves the
-> output went to the address the *requirements* named — a resource server naming
-> a hostile address still passes. Set
-> `x402.masumi.allowed-script-hashes.<network>` in production. This is why it
-> appears on the
+**M1 derives, it does not trust.** The facilitator applies the deployment
+parameters (`requiredAdmins`, `adminVkeys`, `cooldownPeriod`) to the canonical
+`vested_pay` blueprint, computes the script address itself, and requires `payTo`
+to equal it. A resource server naming a look-alike escrow — different admins, so
+a different trust domain — fails here, with or without an allowlist. Preview has
+no canonical deployment, so a 402 for that network must declare one explicitly.
+
+> **M1b narrows further, and is off unless you configure it.** The allowlist
+> pins which escrow *deployments* this facilitator will serve, on top of the
+> derivation M1 already enforces. Set
+> `x402.masumi.allowed-script-hashes.<network>` in production if you want to
+> serve only your own deployment. It appears on the
 > [mainnet checklist](../deploy/README.md#mainnet-readiness-checklist).
 
 ## `script` — arbitrary Plutus lock
