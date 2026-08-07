@@ -55,25 +55,20 @@ public class X402FacilitatorRegistry {
      *
      * @return the `/supported` extra block for a Cardano kind.
      */
-    private java.util.Map<String, Object> cardanoCapabilities() {
-        java.util.Map<String, Object> extra = new java.util.LinkedHashMap<>();
-        extra.put("assetTransferMethods", java.util.List.of("default", "masumi", "script"));
+    private Map<String, Object> cardanoCapabilities() {
+        Map<String, Object> extra = new LinkedHashMap<>();
+        extra.put("assetTransferMethods", List.of("default", "masumi", "script"));
         // Hydra needs head-authenticated evidence this facilitator cannot produce.
-        extra.put("settlementLayers", java.util.List.of("l1"));
+        extra.put("settlementLayers", List.of("l1"));
         // The client builds and signs the whole transaction, balancing the fee
         // against its own inputs; this facilitator only broadcasts.
         extra.put("areFeesSponsored", false);
-        // Both modes are honoured: server submission broadcasts, client
-        // submission authenticates inclusion evidence for a transaction the
-        // payer already sent. A resource server may therefore also quote
-        // `either` and let the payer choose.
-        extra.put("submissionModes", java.util.List.of("server", "client"));
+        extra.put("submissionModes", List.of("server", "client"));
         // -1 is mempool evidence, which this facilitator can read but refuses to
         // settle on unless the operator opted in — so the advertised floor moves
-        // with that setting rather than promising evidence it will not accept.
-        int minimum = acceptMempool ? -1 : 0;
-        java.util.Map<String, Object> range = java.util.Map.of("minimum", minimum, "maximum", 20);
-        extra.put("l1Confirmations", java.util.Map.of("server", range, "client", range));
+        // with that setting rather than promising evidence it would reject.
+        Map<String, Object> range = Map.of("minimum", acceptMempool ? -1 : 0, "maximum", 20);
+        extra.put("l1Confirmations", Map.of("server", range, "client", range));
         return extra;
     }
 }

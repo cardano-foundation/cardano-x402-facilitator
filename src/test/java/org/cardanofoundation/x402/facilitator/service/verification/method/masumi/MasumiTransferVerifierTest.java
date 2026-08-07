@@ -1,5 +1,7 @@
 package org.cardanofoundation.x402.facilitator.service.verification.method.masumi;
 
+import org.cardanofoundation.x402.facilitator.chain.ShelleyNetworkClock;
+import org.cardanofoundation.x402.facilitator.testutil.MasumiTestSeller;
 import org.cardanofoundation.x402.facilitator.model.ErrorCodes;
 import org.cardanofoundation.x402.facilitator.model.protocol.PaymentPayload;
 import org.cardanofoundation.x402.facilitator.model.protocol.PaymentRequirements;
@@ -46,12 +48,12 @@ class MasumiTransferVerifierTest {
         chain.currentSlot = 999_700L;
         scheme = new ExactCardanoScheme(chain, chain, new CardanoTransactionDecoder(),
                 List.of(new DefaultTransferVerifier(), new MasumiTransferVerifier()), 32768,
-                org.cardanofoundation.x402.facilitator.chain.ShelleyNetworkClock.forNetwork("cardano:preprod", null));
+                ShelleyNetworkClock.forNetwork("cardano:preprod", null));
     }
 
     /** Signs with the same key TestTx.SELLER_ADDRESS is derived from (seed 33). */
-    private static final org.cardanofoundation.x402.facilitator.testutil.MasumiTestSeller SELLER =
-            new org.cardanofoundation.x402.facilitator.testutil.MasumiTestSeller("33");
+    private static final MasumiTestSeller SELLER =
+            new MasumiTestSeller("33");
 
     /** The seller-signed terms, in the spec's nested shape. */
     static Map<String, Object> defaultTerms() {

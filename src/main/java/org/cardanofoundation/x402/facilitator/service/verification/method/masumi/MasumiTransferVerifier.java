@@ -17,6 +17,7 @@ import lombok.RequiredArgsConstructor;
 
 import java.math.BigInteger;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -283,8 +284,8 @@ public class MasumiTransferVerifier implements TransferMethodVerifier {
         if (declared instanceof Map<?, ?> d) {
             try {
                 Object admins = d.get("adminVkeys");
-                if (!(admins instanceof java.util.List<?> list) || list.isEmpty()) return null;
-                java.util.List<String> vkeys = list.stream().map(String::valueOf).toList();
+                if (!(admins instanceof List<?> list) || list.isEmpty()) return null;
+                List<String> vkeys = list.stream().map(String::valueOf).toList();
                 return new MasumiBlueprint.MasumiDeployment(
                         new BigInteger(String.valueOf(d.get("requiredAdmins"))),
                         vkeys,
@@ -334,7 +335,7 @@ public class MasumiTransferVerifier implements TransferMethodVerifier {
             Map<String, Object> commitment = new LinkedHashMap<>();
             rawCommitment.forEach((k, v) -> commitment.put(String.valueOf(k), v));
             Object parts = commitment.get("parts");
-            if (parts instanceof java.util.List<?> list) {
+            if (parts instanceof List<?> list) {
                 for (Object partObj : list) {
                     if (!(partObj instanceof Map<?, ?> rawPart)) {
                         return Optional.of(ErrorCodes.MASUMI_COMMITMENT);

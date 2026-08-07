@@ -1,5 +1,7 @@
 package org.cardanofoundation.x402.facilitator.model.protocol;
 
+import java.util.Map;
+
 public record SupportedKind(int x402Version, String scheme, String network,
-                            java.util.Map<String, Object> extra) {
+                            Map<String, Object> extra) {
 }

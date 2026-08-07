@@ -125,8 +125,16 @@ per-policy behavior.
 | `x402.settle.reconcile-horizon` | `24h` | TTL-less expiry fallback |
 
 - **`accept-mempool`** — mempool presence is not payment. **Keep it `false`**
-  regardless of chain backend.
-- **`confirmation-depth`** — 1 is fine for low-value flows; raise it for
+  regardless of chain backend. Turning it on does two things together: `/settle`
+  will release a payment whose 402 asked for `l1Confirmations: -1`, and
+  `/supported` drops its advertised `l1Confirmations.minimum` to `-1` so a
+  resource server can quote it. Both conditions are required — an operator
+  opt-in cannot weaken a stricter 402, and a 402 cannot force an operator to
+  accept reversible evidence.
+- **`confirmation-depth`** — the fallback when a 402 carries no
+  `confirmationPolicy`; a 402 that declares one always wins. It counts blocks
+  **newer** than the one containing the payment, so `0` is canonical inclusion
+  and `1` means one block on top. 1 is fine for low-value flows; raise it for
   higher-value ones. It trades latency for rollback resistance.
 - **`stability-window`** — how long a `CONFIRMED` row stays under rollback watch.
   Shorter than realistic rollback depth means a rolled-back payment stays

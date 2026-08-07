@@ -1,5 +1,8 @@
 package org.cardanofoundation.x402.facilitator.service.settlement;
 
+import java.util.Base64;
+import java.util.ArrayList;
+import org.cardanofoundation.x402.facilitator.chain.ShelleyNetworkClock;
 import org.cardanofoundation.x402.facilitator.model.ErrorCodes;
 import org.cardanofoundation.x402.facilitator.model.chain.SubmissionResult;
 import org.cardanofoundation.x402.facilitator.model.entity.SettlementRecord;
@@ -67,7 +70,7 @@ class ExactCardanoSettleTest {
         chain.currentSlot = 999_700L;
         scheme = new ExactCardanoScheme(chain, chain, new CardanoTransactionDecoder(),
                 List.of(new DefaultTransferVerifier()), 32768,
-                org.cardanofoundation.x402.facilitator.chain.ShelleyNetworkClock.forNetwork("cardano:preprod", null));
+                ShelleyNetworkClock.forNetwork("cardano:preprod", null));
         service = service(false);
     }
 
@@ -134,7 +137,7 @@ class ExactCardanoSettleTest {
         CountDownLatch start = new CountDownLatch(1);
         AtomicInteger successes = new AtomicInteger();
         AtomicInteger duplicates = new AtomicInteger();
-        List<Future<?>> futures = new java.util.ArrayList<>();
+        List<Future<?>> futures = new ArrayList<>();
         for (int i = 0; i < threads; i++) {
             futures.add(pool.submit(() -> {
                 start.await();
@@ -171,7 +174,7 @@ class ExactCardanoSettleTest {
         SettleResponse fail = service.settle(payload(tx), requirements());
         assertThat(fail.errorReason()).isEqualTo(ErrorCodes.SETTLEMENT_FAILED);
         String txHash = com.bloxbean.cardano.client.transaction.util.TransactionUtil
-                .getTxHash(java.util.Base64.getDecoder().decode(tx)).toLowerCase();
+                .getTxHash(Base64.getDecoder().decode(tx)).toLowerCase();
         assertThat(repo.find(txHash).orElseThrow().status()).isEqualTo(SettlementRecord.Status.FAILED);
     }
 
@@ -212,7 +215,7 @@ class ExactCardanoSettleTest {
     void staleClaimIsReclaimable() {
         String tx = TestTx.buildBase64(TestTx.Spec.defaults());
         String txHash = com.bloxbean.cardano.client.transaction.util.TransactionUtil
-                .getTxHash(java.util.Base64.getDecoder().decode(tx)).toLowerCase();
+                .getTxHash(Base64.getDecoder().decode(tx)).toLowerCase();
         // simulate an attempt that died in the claim->submit window, older than the ttl
         repo.insertClaim(new SettlementRecord(txHash, UUID.randomUUID(), "digest", "cardano:preprod",
                 SettlementRecord.Status.CLAIMED, null, null, null, null, null, null, null,
@@ -288,7 +291,7 @@ class ExactCardanoSettleTest {
     void expiredRowWithTxActuallyOnChainPromotesOnLookup() {
         String tx = TestTx.buildBase64(TestTx.Spec.defaults());
         String txHash = com.bloxbean.cardano.client.transaction.util.TransactionUtil
-                .getTxHash(java.util.Base64.getDecoder().decode(tx)).toLowerCase();
+                .getTxHash(Base64.getDecoder().decode(tx)).toLowerCase();
         UUID attempt = UUID.randomUUID();
         repo.insertClaim(new SettlementRecord(txHash, attempt, "d", "cardano:preprod",
                 SettlementRecord.Status.CLAIMED, TestTx.PAYER_ADDRESS, null, null, null, null,

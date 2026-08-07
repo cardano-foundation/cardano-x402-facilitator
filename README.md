@@ -28,6 +28,11 @@ on-chain-proven Blockfrost HTTP client, just pointed at a different
 - **All three x402 Cardano transfer methods** — `default` (address-to-address),
   `masumi` (`vested_pay` escrow, rules M1–M9), and `script` (arbitrary Plutus
   locks with aiken UPLC parameter application).
+- **Both submission modes** — `server` broadcasts the payment; `client`
+  authenticates one the payer already broadcast, which lets a resource server
+  quote `submissionPolicy: either` and leave the choice to the payer. Evidence
+  spans the spec's full ladder: mempool acceptance (`-1`), canonical inclusion
+  (`0`), and depth (`1..20`).
 - **One Blockfrost-compatible chain client** — point it at hosted Blockfrost or
   a standalone yaci-store instance (your own cardano-node + yaci-store,
   consumed over its Blockfrost-compatible API) — chosen per network via

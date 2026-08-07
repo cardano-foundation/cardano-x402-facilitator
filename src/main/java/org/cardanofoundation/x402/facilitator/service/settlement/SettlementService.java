@@ -14,6 +14,7 @@ import org.cardanofoundation.x402.facilitator.model.chain.InclusionResult;
 import org.cardanofoundation.x402.facilitator.model.chain.SubmissionResult;
 import org.cardanofoundation.x402.facilitator.model.verification.DecodedTransaction;
 import org.cardanofoundation.x402.facilitator.repository.SettlementRepository;
+import org.cardanofoundation.x402.facilitator.service.verification.CardanoPolicies;
 import org.cardanofoundation.x402.facilitator.service.verification.ExactCardanoScheme;
 import org.cardanofoundation.x402.facilitator.service.verification.decoder.CardanoTransactionDecoder;
 import lombok.RequiredArgsConstructor;
@@ -92,18 +93,15 @@ public class SettlementService {
         // operator's default. A server that quoted `l1Confirmations: 2` must not
         // release on one, and one that quoted 0 should not be made to wait for
         // the operator's preferred depth.
-        Integer declared = org.cardanofoundation.x402.facilitator.service.verification.CardanoPolicies
-                .l1Confirmations(requirements.extra());
+        Integer declared = CardanoPolicies.l1Confirmations(requirements.extra());
         int requiredDepth = declared != null ? declared : config.confirmationDepth();
 
         // Client mode: the payer already broadcast. Submitting again is not a
         // harmless retry — the transaction is on the network, so this side must
         // authenticate it and wait for the agreed depth instead. verify() above
         // has already established that the chain has a record of these bytes.
-        String submissionMode = org.cardanofoundation.x402.facilitator.service.verification.CardanoPolicies
-                .submissionMode(payload.payload());
-        if (org.cardanofoundation.x402.facilitator.service.verification.CardanoPolicies.SUBMISSION_CLIENT
-                .equals(submissionMode)) {
+        String submissionMode = CardanoPolicies.submissionMode(payload.payload());
+        if (CardanoPolicies.SUBMISSION_CLIENT.equals(submissionMode)) {
             if (!repo.casTransition(txHash, attemptId, Status.CLAIMED, Status.SUBMITTED,
                     Map.of("submitted_at", clock.instant()))) {
                 return SettleResponse.fail(ErrorCodes.DUPLICATE_SETTLEMENT, null, network);
@@ -157,10 +155,10 @@ public class SettlementService {
      */
     private SettleResponse awaitAndRecord(String txHash, UUID attemptId, int requiredDepth,
                                           String network, String payer) {
-        // Mempool evidence settles a payment only when the payment asked for it
-        // (-1) AND the operator opted in. Either alone is not enough: an
-        // operator's convenience must not weaken a stricter 402, and a 402
-        // cannot force an operator to accept reversible evidence.
+        // Mempool evidence settles a payment only when the 402 asked for it (-1)
+        // AND the operator opted in. Either alone is not enough: an operator's
+        // convenience must not weaken a stricter 402, and a 402 must not force an
+        // operator to accept reversible evidence.
         if (requiredDepth <= -1) {
             if (!config.acceptMempool()) {
                 return SettleResponse.fail(ErrorCodes.SETTLEMENT_NOT_CONFIRMED,

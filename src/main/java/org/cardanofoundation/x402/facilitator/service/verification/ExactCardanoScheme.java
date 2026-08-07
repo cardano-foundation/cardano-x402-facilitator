@@ -3,7 +3,6 @@ package org.cardanofoundation.x402.facilitator.service.verification;
 import com.bloxbean.cardano.client.address.Address;
 import com.bloxbean.cardano.client.address.AddressType;
 import com.bloxbean.cardano.client.address.Credential;
-import com.bloxbean.cardano.client.api.model.ProtocolParams;
 import com.bloxbean.cardano.client.common.MinAdaCalculator;
 import com.bloxbean.cardano.client.util.HexUtil;
 import org.cardanofoundation.x402.facilitator.chain.ChainLookupException;
@@ -12,6 +11,7 @@ import org.cardanofoundation.x402.facilitator.chain.NetworkClock;
 import org.cardanofoundation.x402.facilitator.chain.ProtocolParamsProvider;
 import org.cardanofoundation.x402.facilitator.model.ErrorCodes;
 import org.cardanofoundation.x402.facilitator.model.chain.InclusionResult;
+import org.cardanofoundation.x402.facilitator.model.chain.ProtocolParams;
 import org.cardanofoundation.x402.facilitator.model.chain.UtxoState;
 import org.cardanofoundation.x402.facilitator.model.protocol.PaymentPayload;
 import org.cardanofoundation.x402.facilitator.model.protocol.PaymentRequirements;
@@ -131,19 +131,15 @@ public class ExactCardanoScheme {
 
             // In client mode the facilitator never broadcasts — it authenticates
             // evidence that the ledger already accepted this exact transaction.
-            // The evidence is keyed by transaction id, which binds it to these
-            // bytes, so it cannot be borrowed from some other payment.
             InclusionResult evidence = null;
             if (clientSubmitted) {
-                // The `is_valid` flag lives OUTSIDE the transaction body, so it is
-                // not covered by the transaction id: a client can broadcast the
-                // failing form and hand over an identical payload claiming valid.
-                // Evidence keyed by that id would then point at a transaction that
-                // consumed collateral and created none of its outputs. Only a
-                // script-running transaction can be phase-2 invalid at all, so
-                // refusing script witnesses closes the hole without trusting the
-                // provider to report it. A payment pays *to* addresses and never
-                // needs one.
+                // `is_valid` lives outside the transaction body, so it is not
+                // covered by the transaction id: a client could broadcast the
+                // failing form and hand over an identical payload claiming valid,
+                // and evidence keyed by that id would point at a transaction that
+                // created none of its outputs. Only a script-running transaction
+                // can be phase-2 invalid, so refusing scripts closes the hole
+                // without trusting the provider to report it.
                 if (tx.scriptWitnessCount() > 0)
                     return VerifyResponse.invalid(ErrorCodes.CLIENT_SCRIPT_EXECUTION,
                             "client-submitted payments must not run scripts; such a transaction "
@@ -157,9 +153,8 @@ public class ExactCardanoScheme {
                     return VerifyResponse.invalid(ErrorCodes.EVIDENCE_MISSING,
                             "the chain has no record of this transaction", "");
             }
-            // Once the ledger has accepted the transaction, the deadline rules
-            // below describe a decision the chain has already made. Re-imposing
-            // them would reject a payment that demonstrably settled.
+            // The deadline rules below describe a decision the chain has already
+            // made; re-imposing them would reject a payment that demonstrably settled.
             boolean acceptedByLedger = evidence != null;
 
             // Stage C — time & protocol limits
@@ -186,7 +181,7 @@ public class ExactCardanoScheme {
                 if (tx.validityStartSlot() != null && tx.validityStartSlot() > currentSlot)
                     return VerifyResponse.invalid(ErrorCodes.NOT_YET_VALID, null, "");
             }
-            org.cardanofoundation.x402.facilitator.model.chain.ProtocolParams pp;
+            ProtocolParams pp;
             try {
                 pp = params.current();
             } catch (RuntimeException e) {
@@ -219,10 +214,10 @@ public class ExactCardanoScheme {
                         "input state unknown (indexer sync horizon)", "");
             UtxoState nonceState = states.get(nonceLower);
             // The nonce must still be unspent — UNLESS this payment is what spent
-            // it. In client mode the transaction is already on the chain, so its
-            // own inputs are gone by definition; requiring them unspent would
-            // reject exactly the payments that settled. The evidence checked
-            // above is what stands in for the unspent-input guarantee there.
+            // it. A client-submitted transaction is already on the chain, so its
+            // own inputs are gone by definition, and requiring them unspent would
+            // reject exactly the payments that settled. Inclusion evidence stands
+            // in for the unspent-input guarantee there.
             String payer;
             if (acceptedByLedger) {
                 payer = switch (nonceState) {
@@ -230,8 +225,8 @@ public class ExactCardanoScheme {
                     case UtxoState.Spent spent -> spent.ownerAddress();
                     default -> null;
                 };
-                // An output that never existed reports no owner. Without a payer
-                // the Masumi buyer binding below has nothing to compare against.
+                // An output that never existed reports no owner, and the Masumi
+                // buyer binding below needs one to compare against.
                 if (payer == null || payer.isEmpty())
                     return VerifyResponse.invalid(ErrorCodes.NONCE_NOT_ON_CHAIN,
                             "could not resolve the owner of the nonce UTXO", "");
@@ -265,7 +260,7 @@ public class ExactCardanoScheme {
      */
     private VerifyResponse checkValueTransfer(DecodedTransaction tx, PaymentRequirements requirements,
                                               boolean isLovelace, String assetKey, BigInteger requestedAmount,
-                                              org.cardanofoundation.x402.facilitator.model.chain.ProtocolParams pp,
+                                              ProtocolParams pp,
                                               String payer) {
         boolean recipientFound = false, assetFound = false;
         BigInteger bestAvailable = BigInteger.ZERO;
@@ -278,9 +273,7 @@ public class ExactCardanoScheme {
             assetFound = true;
             if (available.compareTo(bestAvailable) > 0) bestAvailable = available;
             if (available.compareTo(requestedAmount) >= 0) {
-                ProtocolParams cclParams = new ProtocolParams();
-                cclParams.setCoinsPerUtxoSize(pp.coinsPerUtxoByte().toString());
-                BigInteger minUtxo = new MinAdaCalculator(cclParams).calculateMinAda(out.raw());
+                BigInteger minUtxo = minUtxoLovelace(out, pp);
                 if (out.coin().compareTo(minUtxo) < 0)
                     return VerifyResponse.invalid(ErrorCodes.MIN_UTXO_INSUFFICIENT,
                             "output to " + requirements.payTo() + " carries " + out.coin()
@@ -308,6 +301,21 @@ public class ExactCardanoScheme {
         return VerifyResponse.invalid(ErrorCodes.AMOUNT_INSUFFICIENT,
                 "output to " + requirements.payTo() + " pays " + bestAvailable
                         + ", requires " + requestedAmount, payer);
+    }
+
+    /**
+     * The minimum lovelace an output must carry, per the live protocol
+     * parameters. Isolated because cardano-client-lib's calculator takes its own
+     * {@code ProtocolParams} type, which collides by simple name with ours.
+     *
+     * @param output the output being priced.
+     * @param pp the facilitator's view of the protocol parameters.
+     * @return the min-UTXO floor in lovelace.
+     */
+    private static BigInteger minUtxoLovelace(DecodedTransaction.Output output, ProtocolParams pp) {
+        var cclParams = new com.bloxbean.cardano.client.api.model.ProtocolParams();
+        cclParams.setCoinsPerUtxoSize(pp.coinsPerUtxoByte().toString());
+        return new MinAdaCalculator(cclParams).calculateMinAda(output.raw());
     }
 
     /**

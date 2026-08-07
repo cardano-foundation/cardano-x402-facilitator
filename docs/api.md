@@ -187,7 +187,21 @@ This is retryable.
 
 ```json
 {
-  "kinds": [ { "x402Version": 2, "scheme": "exact", "network": "cardano:preprod" } ],
+  "kinds": [ {
+    "x402Version": 2,
+    "scheme": "exact",
+    "network": "cardano:preprod",
+    "extra": {
+      "assetTransferMethods": ["default", "masumi", "script"],
+      "settlementLayers": ["l1"],
+      "areFeesSponsored": false,
+      "submissionModes": ["server", "client"],
+      "l1Confirmations": {
+        "server": { "minimum": 0, "maximum": 20 },
+        "client": { "minimum": 0, "maximum": 20 }
+      }
+    }
+  } ],
   "extensions": [],
   "signers": { "cardano:*": [] }
 }
@@ -197,6 +211,22 @@ One `kinds` entry per configured network, always with `x402Version: 2`. `signers
 carries one key per registered CAIP family — `cardano:*` — mapping to an empty
 list, because the facilitator holds no signing keys. Clients should use this for
 discovery rather than assuming a network is served.
+
+`extra` is the capability contract a resource server checks its selected policies
+against before serving a 402. An omitted capability reads as **not offered**,
+never as unknown.
+
+| Field | Meaning |
+| --- | --- |
+| `assetTransferMethods` | The `extra.assetTransferMethod` values this facilitator verifies. |
+| `settlementLayers` | `l1` only. Hydra needs head-authenticated evidence this facilitator cannot produce. |
+| `areFeesSponsored` | Always `false`. The client builds and signs the whole transaction and balances the fee against its own inputs. |
+| `submissionModes` | Both are honoured, so a resource server may also quote `either` and let the payer choose. |
+| `l1Confirmations` | Per-mode acceptable range for `extra.confirmationPolicy.l1Confirmations`. |
+
+The `minimum` is `0` — canonical inclusion — unless `x402.settle.accept-mempool`
+is on, in which case it drops to `-1`. The floor tracks that setting rather than
+advertising evidence the facilitator would then refuse to settle on.
 
 ## `GET /health`
 

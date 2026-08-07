@@ -1,5 +1,6 @@
 package org.cardanofoundation.x402.facilitator.service.settlement;
 
+import org.cardanofoundation.x402.facilitator.chain.ShelleyNetworkClock;
 import org.cardanofoundation.x402.facilitator.model.ErrorCodes;
 import org.cardanofoundation.x402.facilitator.model.protocol.PaymentPayload;
 import org.cardanofoundation.x402.facilitator.model.protocol.PaymentRequirements;
@@ -68,8 +69,7 @@ class ClientSubmissionTest {
         chain.currentSlot = 999_700L;
         scheme = new ExactCardanoScheme(chain, chain, new CardanoTransactionDecoder(),
                 List.of(new DefaultTransferVerifier()), 32768,
-                org.cardanofoundation.x402.facilitator.chain.ShelleyNetworkClock
-                        .forNetwork("cardano:preprod", null));
+                ShelleyNetworkClock.forNetwork("cardano:preprod", null));
     }
 
     SettlementService service(boolean acceptMempool) {

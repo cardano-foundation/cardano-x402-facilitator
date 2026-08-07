@@ -74,6 +74,33 @@ pipeline with a misleading payer-blaming error.
     *live protocol limit*, so a tx that could never be accepted by a node is
     rejected here rather than at submission.
 
+## Submission mode — who broadcasts
+
+Read from the **canonical requirements**, never the client-echoed `accepted`:
+the policy is the server's to set, not the payer's to choose.
+
+- `extra.submissionPolicy` is `server` (default), `client`, or `either`.
+- `payload.submissionMode` is `server` (default) or `client`; `either` is a
+  policy and never a valid payload mode.
+- A mode the policy does not admit → `..._submission_mode_mismatch`.
+- A malformed policy or confirmation policy → `invalid_exact_cardano_requirements_policy`.
+
+**Client mode inverts two of the checks below**, so it takes its own path:
+
+- The payer already broadcast, so the facilitator authenticates instead of
+  submitting. `checkInclusion` must report the transaction in a block or a
+  mempool; no record → `..._evidence_mismatch`. The evidence is keyed by
+  transaction id, which binds it to these exact bytes.
+- Script witnesses are refused → `..._phase2_invalid`. The `is_valid` flag lives
+  *outside* the transaction body, so it is not covered by the transaction id: a
+  client could broadcast the failing form and hand over an identical payload
+  claiming valid, and evidence keyed by that id would point at a transaction
+  that consumed collateral and created none of its declared outputs. Only a
+  script-running transaction can be phase-2 invalid, so refusing them closes the
+  hole without trusting the provider to report it.
+- Once the ledger has accepted the transaction, `ttl_expired` no longer applies
+  — it describes a decision the chain has already made.
+
 ## Stage D — replay protection
 
 This is the part that stops a payment being spent twice, so it's worth reading
@@ -86,6 +113,15 @@ closely.
 19. The nonce UTxO is not `Unspent` → `..._nonce_not_on_chain`
 20. Any other input is `Spent` → `..._input_not_available`
 21. **D5** payer is not authorized → `..._payer_not_witness`
+
+**Rules 19 and 20 are server-mode only.** A client-submitted payment has already
+consumed its own inputs by the time the facilitator sees it, so requiring them
+unspent would reject exactly the payments that settled. Inclusion evidence is
+what stands in for the unspent-input guarantee there, and the payer is resolved
+from the spent nonce's owner — `UtxoState.Spent` carries it, because the
+producing transaction names the owner whether or not the output still exists. An
+output that never existed reports no owner and is rejected as
+`..._nonce_not_on_chain`.
 
 **UTxO state is tri-state — `Unspent`, `Spent`, `Unknown` — and the third one
 carries the safety property.** An indexer that hasn't caught up cannot

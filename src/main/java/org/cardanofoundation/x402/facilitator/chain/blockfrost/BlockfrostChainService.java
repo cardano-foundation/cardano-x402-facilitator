@@ -14,8 +14,13 @@ import org.cardanofoundation.x402.facilitator.model.chain.InclusionResult;
 import org.cardanofoundation.x402.facilitator.model.chain.SubmissionResult;
 import org.cardanofoundation.x402.facilitator.model.chain.UtxoState;
 
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.List;
+import java.util.regex.Pattern;
 
 /**
  * Blockfrost backend: owns every chain capability for its network.
@@ -36,9 +41,9 @@ public class BlockfrostChainService implements FacilitatorChainService {
     private volatile long lastProbeMillis;
     private volatile boolean lastProbeOk;
 
-    private static final java.util.regex.Pattern TX_HASH =
-            java.util.regex.Pattern.compile("^[0-9a-fA-F]{64}$");
+    private static final Pattern TX_HASH = Pattern.compile("^[0-9a-fA-F]{64}$");
     private static final Duration MEMPOOL_TIMEOUT = Duration.ofSeconds(10);
+    private static final HttpClient HTTP = HttpClient.newHttpClient();
 
     @Override
     public UtxoState getUtxoState(String txHashHex, int index) {
@@ -145,15 +150,13 @@ public class BlockfrostChainService implements FacilitatorChainService {
     private boolean inMempool(String txHashHex) {
         if (baseUrl == null || !TX_HASH.matcher(txHashHex).matches()) return false;
         try {
-            java.net.http.HttpRequest request = java.net.http.HttpRequest.newBuilder()
-                    .uri(java.net.URI.create(baseUrl + "mempool/" + txHashHex.toLowerCase()))
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(baseUrl + "mempool/" + txHashHex.toLowerCase()))
                     .header("project_id", projectId == null ? "" : projectId)
                     .timeout(MEMPOOL_TIMEOUT)
                     .GET()
                     .build();
-            java.net.http.HttpResponse<Void> response = java.net.http.HttpClient.newHttpClient()
-                    .send(request, java.net.http.HttpResponse.BodyHandlers.discarding());
-            return response.statusCode() == 200;
+            return HTTP.send(request, HttpResponse.BodyHandlers.discarding()).statusCode() == 200;
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             return false;

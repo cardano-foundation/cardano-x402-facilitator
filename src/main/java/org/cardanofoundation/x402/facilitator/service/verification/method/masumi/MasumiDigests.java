@@ -9,6 +9,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -74,7 +75,7 @@ public final class MasumiDigests {
         String canonicalization = String.valueOf(part.get("canonicalization"));
         byte[] bytes;
         if ("raw".equals(canonicalization)) {
-            bytes = java.util.Base64.getUrlDecoder().decode(String.valueOf(part.get("content")));
+            bytes = Base64.getUrlDecoder().decode(String.valueOf(part.get("content")));
         } else {
             bytes = jcs(part.get("content")).getBytes(StandardCharsets.UTF_8);
         }

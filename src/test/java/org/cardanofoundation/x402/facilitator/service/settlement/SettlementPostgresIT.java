@@ -1,5 +1,7 @@
 package org.cardanofoundation.x402.facilitator.service.settlement;
 
+import java.util.ArrayList;
+import org.cardanofoundation.x402.facilitator.chain.ShelleyNetworkClock;
 import org.cardanofoundation.x402.facilitator.model.ErrorCodes;
 import org.cardanofoundation.x402.facilitator.model.entity.SettlementRecord;
 import org.cardanofoundation.x402.facilitator.model.protocol.PaymentPayload;
@@ -89,7 +91,7 @@ class SettlementPostgresIT {
     SettlementService service(SettlementRepository repo) {
         ExactCardanoScheme scheme = new ExactCardanoScheme(chain, chain, new CardanoTransactionDecoder(),
                 List.of(new DefaultTransferVerifier()), 32768,
-                org.cardanofoundation.x402.facilitator.chain.ShelleyNetworkClock.forNetwork("cardano:preprod", null));
+                ShelleyNetworkClock.forNetwork("cardano:preprod", null));
         return new SettlementService(repo, scheme, chain, new CardanoTransactionDecoder(),
                 new SettlementService.Config(Duration.ofSeconds(2), 1, false, false,
                         Duration.ofMinutes(10), Duration.ofSeconds(2)),
@@ -116,7 +118,7 @@ class SettlementPostgresIT {
         CountDownLatch start = new CountDownLatch(1);
         AtomicInteger successes = new AtomicInteger();
         AtomicInteger duplicates = new AtomicInteger();
-        List<Future<?>> futures = new java.util.ArrayList<>();
+        List<Future<?>> futures = new ArrayList<>();
         for (int i = 0; i < threads; i++) {
             SettlementService svc = (i % 2 == 0) ? serviceA : serviceB; // two app "contexts"
             futures.add(pool.submit(() -> {

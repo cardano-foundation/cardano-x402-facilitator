@@ -1,5 +1,6 @@
 package org.cardanofoundation.x402.facilitator.service.verification;
 
+import org.cardanofoundation.x402.facilitator.chain.ShelleyNetworkClock;
 import com.bloxbean.cardano.client.address.AddressProvider;
 import com.bloxbean.cardano.client.address.Credential;
 import com.bloxbean.cardano.client.common.model.Networks;
@@ -48,7 +49,7 @@ class ExactCardanoVerifyTest {
         chain.currentSlot = 999_700L; // fixture ttl = 1_000_000, 300 slots ahead => inside the rule 7 window
         scheme = new ExactCardanoScheme(chain, chain, new CardanoTransactionDecoder(),
                 List.of(new DefaultTransferVerifier()), 32768,
-                org.cardanofoundation.x402.facilitator.chain.ShelleyNetworkClock.forNetwork("cardano:preprod", null));
+                ShelleyNetworkClock.forNetwork("cardano:preprod", null));
     }
 
     VerifyResponse verifyDefault() {

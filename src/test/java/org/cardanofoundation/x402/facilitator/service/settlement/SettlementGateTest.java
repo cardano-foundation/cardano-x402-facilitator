@@ -1,5 +1,6 @@
 package org.cardanofoundation.x402.facilitator.service.settlement;
 
+import org.cardanofoundation.x402.facilitator.model.chain.BackendHealth;
 import org.cardanofoundation.x402.facilitator.chain.FacilitatorChainService;
 import org.cardanofoundation.x402.facilitator.testutil.FakeChainService;
 import org.junit.jupiter.api.Test;
@@ -38,7 +39,7 @@ class SettlementGateTest {
     @Test void healthProbeExceptionClosesGate() {
         FacilitatorChainService throwing = new FakeChainService() {
             @Override
-            public org.cardanofoundation.x402.facilitator.model.chain.BackendHealth health() {
+            public BackendHealth health() {
                 throw new RuntimeException("probe blew up");
             }
         };

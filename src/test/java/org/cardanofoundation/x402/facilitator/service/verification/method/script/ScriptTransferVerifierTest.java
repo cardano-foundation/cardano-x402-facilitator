@@ -1,5 +1,6 @@
 package org.cardanofoundation.x402.facilitator.service.verification.method.script;
 
+import org.cardanofoundation.x402.facilitator.chain.ShelleyNetworkClock;
 import com.bloxbean.cardano.client.plutus.spec.BigIntPlutusData;
 import com.bloxbean.cardano.client.plutus.spec.PlutusData;
 import org.cardanofoundation.x402.facilitator.model.ErrorCodes;
@@ -51,7 +52,7 @@ class ScriptTransferVerifierTest {
     ExactCardanoScheme scheme(String datumPolicy) {
         return new ExactCardanoScheme(chain, chain, new CardanoTransactionDecoder(),
                 List.of(new DefaultTransferVerifier(), new ScriptTransferVerifier(datumPolicy)), 32768,
-                org.cardanofoundation.x402.facilitator.chain.ShelleyNetworkClock.forNetwork("cardano:preprod", null));
+                ShelleyNetworkClock.forNetwork("cardano:preprod", null));
     }
 
     static Map<String, Object> inlineExtra(String type, String code) {
