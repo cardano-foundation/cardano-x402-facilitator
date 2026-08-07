@@ -84,6 +84,22 @@ bugs — into `Spent` rejects honest payments, into `Unspent` accepts replays. S
 `SubmissionResult.Unknown`: a submission that *might* have been broadcast never
 releases the claim.
 
+`Spent` carries the owner address too. The producing transaction names the owner
+whether or not the output still exists, and client-submitted payments need it:
+by the time the facilitator sees one, the payment has already consumed its own
+nonce, so the payer cannot be read from a live UTXO. A null owner means the
+output was never created at all.
+
+### `InclusionResult` is the evidence ladder
+
+`NotSeen` | `Mempool` | `Included(depth, …)`, matching the spec's
+`l1Confirmations` levels of `-1`, `0` and `n`. **`depth` counts blocks *newer*
+than the containing block**, so a transaction in the tip has depth `0` —
+"canonical inclusion" — not `1`. `Mempool` comes from Blockfrost's
+`/mempool/{hash}`, which the backend interface does not expose, so it goes over
+raw HTTP; a provider fault answers "not pending" rather than throwing, since
+mempool presence only ever strengthens evidence.
+
 ### The chain backend
 
 There is exactly one backend: the cardano-client-lib Blockfrost provider
@@ -143,7 +159,7 @@ journalled in Postgres and swept asynchronously.
 |---|---|
 | `CLAIMED` | Journalled, nothing on the wire yet |
 | `SUBMITTING` | About to hit the wire — persisted **before** the call |
-| `SUBMITTED` | Node accepted it |
+| `SUBMITTED` | Node accepted it (or, in client mode, the payer already broadcast) |
 | `NOT_CONFIRMED` | Broadcast, confirmation timed out — **may still land** |
 | `CONFIRMED` | Included at `confirmation-depth` |
 | `FAILED` | Rejected or never broadcast |
@@ -154,7 +170,8 @@ Transitions:
 | From → To | Trigger |
 |---|---|
 | → `CLAIMED` | Verification passed; insert, or reclaim a dead row |
-| `CLAIMED` → `SUBMITTING` | Before any wire I/O |
+| `CLAIMED` → `SUBMITTED` | **Client mode**: the payer already broadcast, so nothing is submitted |
+| `CLAIMED` → `SUBMITTING` | Server mode, before any wire I/O |
 | `SUBMITTING` → `FAILED` | `Rejected` or `NotSubmitted` |
 | `SUBMITTING` → `SUBMITTED` | `Accepted` |
 | `SUBMITTING` → *(stays)* | **`Unknown`** — may have been broadcast; reconciler only |
@@ -172,6 +189,11 @@ The row stays claimed and the reconciler resolves it from the chain.
 `CONFIRMED → SUBMITTED` exists because confirmation isn't final: within the
 stability window a confirmed tx can roll back, and reporting stale success would
 grant a resource that was never paid for.
+
+`CLAIMED → SUBMITTED` skips `SUBMITTING` in client mode because there is no wire
+I/O to protect: the transaction is already on the network. Re-broadcasting it
+would not be a harmless retry, so `settle()` authenticates and waits for the
+depth the 402 asked for instead.
 
 ### Claiming and idempotency
 

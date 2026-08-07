@@ -32,6 +32,13 @@ public final class TestTx {
     public static final String PAYER_ADDRESS;
     public static final String PAY_TO; // the "server" address fixtures pay to
     public static final String SELLER_ADDRESS; // fixed key-cred masumi seller address
+    /**
+     * A third party, distinct from both buyer and seller. Mismatch fixtures use
+     * it instead of swapping in the counterparty's address, which would collide
+     * with the aggregated-payout rule (effective buyer target != seller target)
+     * and be rejected earlier under a different code.
+     */
+    public static final String THIRD_PARTY_ADDRESS;
     public static final String NONCE_TX_HASH = "ab".repeat(32);
     public static final String NONCE = NONCE_TX_HASH + "#0";
 
@@ -49,8 +56,8 @@ public final class TestTx {
     public static final BigInteger MASUMI_COLLATERAL_RETURN_LOVELACE = BigInteger.ZERO;
     public static final BigInteger MASUMI_PAY_BY_TIME = new BigInteger("2000000000000");
     public static final BigInteger MASUMI_SUBMIT_RESULT_TIME = new BigInteger("2000000600000");
-    public static final BigInteger MASUMI_UNLOCK_TIME = new BigInteger("2000001200000");
-    public static final BigInteger MASUMI_EXTERNAL_DISPUTE_UNLOCK_TIME = new BigInteger("2000001800000");
+    public static final BigInteger MASUMI_UNLOCK_TIME = new BigInteger("2000001800000");
+    public static final BigInteger MASUMI_EXTERNAL_DISPUTE_UNLOCK_TIME = new BigInteger("2000003000000");
     // 5 tADA: comfortably above min-UTxO-with-datum (mirrors Task M2's masumi route price).
     public static final BigInteger MASUMI_AMOUNT = BigInteger.valueOf(5_000_000L);
 
@@ -75,6 +82,9 @@ public final class TestTx {
             PAYER_VKEY = KeyGenUtil.getPublicKeyFromPrivateKey(PAYER_KEY);
             PAYER_ADDRESS = AddressProvider.getEntAddress(
                     Credential.fromKey(KeyGenUtil.getKeyHash(PAYER_VKEY)), Networks.testnet()).toBech32();
+            THIRD_PARTY_ADDRESS = AddressProvider.getEntAddress(
+                    Credential.fromKey(KeyGenUtil.getKeyHash(KeyGenUtil.getPublicKeyFromPrivateKey(
+                            new SecretKey("5820" + "44".repeat(32))))), Networks.testnet()).toBech32();
             SecretKey serverKey = new SecretKey("5820" + "22".repeat(32));
             PAY_TO = AddressProvider.getEntAddress(
                     Credential.fromKey(KeyGenUtil.getKeyHash(KeyGenUtil.getPublicKeyFromPrivateKey(serverKey))),

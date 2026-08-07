@@ -187,7 +187,21 @@ This is retryable.
 
 ```json
 {
-  "kinds": [ { "x402Version": 2, "scheme": "exact", "network": "cardano:preprod" } ],
+  "kinds": [ {
+    "x402Version": 2,
+    "scheme": "exact",
+    "network": "cardano:preprod",
+    "extra": {
+      "assetTransferMethods": ["default", "masumi", "script"],
+      "settlementLayers": ["l1"],
+      "areFeesSponsored": false,
+      "submissionModes": ["server", "client"],
+      "l1Confirmations": {
+        "server": { "minimum": 0, "maximum": 20 },
+        "client": { "minimum": 0, "maximum": 20 }
+      }
+    }
+  } ],
   "extensions": [],
   "signers": { "cardano:*": [] }
 }
@@ -197,6 +211,22 @@ One `kinds` entry per configured network, always with `x402Version: 2`. `signers
 carries one key per registered CAIP family — `cardano:*` — mapping to an empty
 list, because the facilitator holds no signing keys. Clients should use this for
 discovery rather than assuming a network is served.
+
+`extra` is the capability contract a resource server checks its selected policies
+against before serving a 402. An omitted capability reads as **not offered**,
+never as unknown.
+
+| Field | Meaning |
+| --- | --- |
+| `assetTransferMethods` | The `extra.assetTransferMethod` values this facilitator verifies. |
+| `settlementLayers` | `l1` only. Hydra needs head-authenticated evidence this facilitator cannot produce. |
+| `areFeesSponsored` | Always `false`. The client builds and signs the whole transaction and balances the fee against its own inputs. |
+| `submissionModes` | Both are honoured, so a resource server may also quote `either` and let the payer choose. |
+| `l1Confirmations` | Per-mode acceptable range for `extra.confirmationPolicy.l1Confirmations`. |
+
+The `minimum` is `0` — canonical inclusion — unless `x402.settle.accept-mempool`
+is on, in which case it drops to `-1`. The floor tracks that setting rather than
+advertising evidence the facilitator would then refuse to settle on.
 
 ## `GET /health`
 
@@ -255,8 +285,19 @@ Every value below is a stable code returned in `invalidReason` /
 
 | Code | Meaning |
 |---|---|
-| `invalid_exact_cardano_payload_ttl_expired` | `validTo` already passed |
+| `invalid_exact_cardano_payload_ttl_expired` | `validTo` already passed — not applied once inclusion evidence proves the ledger accepted the tx |
 | `invalid_exact_cardano_payload_not_yet_valid` | `validFrom` in the future |
+| `invalid_exact_cardano_payload_ttl_too_far` | TTL further ahead than `maxTimeoutSeconds` allows |
+
+### Submission mode and evidence
+
+| Code | Meaning |
+|---|---|
+| `invalid_exact_cardano_requirements_policy` | `extra` carries a malformed `submissionPolicy` or `confirmationPolicy` |
+| `invalid_exact_cardano_payload_submission_mode_mismatch` | `payload.submissionMode` is not admitted by the declared policy |
+| `invalid_exact_cardano_payload_submission_mode_unsupported` | The selected mode is not one this facilitator can honour |
+| `invalid_exact_cardano_payload_evidence_mismatch` | Client submission claimed, but the chain has no record of the transaction |
+| `invalid_exact_cardano_payload_phase2_invalid` | A client-submitted payment carries script witnesses and could land phase-2 invalid |
 
 ### Nonce / replay
 
@@ -299,6 +340,15 @@ Every value below is a stable code returned in `invalidReason` /
 | `invalid_exact_cardano_payload_masumi_min_utxo` | Post-result output below min-UTxO |
 | `invalid_exact_cardano_payload_masumi_reference_script` | Reference script attached (forbidden) |
 | `invalid_exact_cardano_payload_masumi_asset` | Locked asset set ≠ required set |
+
+Requirements-level Masumi codes — these reject the **402 itself** as unusable,
+before any transaction is examined:
+
+| Code | Meaning |
+|---|---|
+| `invalid_exact_cardano_requirements_masumi_schema` | `extra` is malformed, or the seller's CIP-8 authorization over `termsDigest` does not verify |
+| `invalid_exact_cardano_requirements_masumi_commitment` | The request commitment does not recompute, or `terms.inputHash` disagrees with it |
+| `invalid_exact_cardano_requirements_masumi_identifier` | `blockchainIdentifier` is unusable or names a different escrow |
 
 ### `script` method
 

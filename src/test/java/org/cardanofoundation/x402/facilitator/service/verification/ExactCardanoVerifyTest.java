@@ -1,5 +1,6 @@
 package org.cardanofoundation.x402.facilitator.service.verification;
 
+import org.cardanofoundation.x402.facilitator.chain.ShelleyNetworkClock;
 import com.bloxbean.cardano.client.address.AddressProvider;
 import com.bloxbean.cardano.client.address.Credential;
 import com.bloxbean.cardano.client.common.model.Networks;
@@ -45,9 +46,10 @@ class ExactCardanoVerifyTest {
     void setUp() {
         chain = new FakeChainService();
         chain.unspent.put(TestTx.NONCE, TestTx.PAYER_ADDRESS); // nonce unspent, owned by payer
-        chain.currentSlot = 500_000L; // fixture ttl = 1_000_000 => valid
+        chain.currentSlot = 999_700L; // fixture ttl = 1_000_000, 300 slots ahead => inside the rule 7 window
         scheme = new ExactCardanoScheme(chain, chain, new CardanoTransactionDecoder(),
-                List.of(new DefaultTransferVerifier()), 32768);
+                List.of(new DefaultTransferVerifier()), 32768,
+                ShelleyNetworkClock.forNetwork("cardano:preprod", null));
     }
 
     VerifyResponse verifyDefault() {
@@ -209,8 +211,8 @@ class ExactCardanoVerifyTest {
     @Test
     void rejectsNotYetValid() {
         PaymentRequirements req = requirements("cardano:preprod", TestTx.PAY_TO, "2000000", "lovelace");
-        String tx = TestTx.buildBase64(TestTx.Spec.defaults().withValidityStart(900_000L));
-        chain.currentSlot = 800_000L;
+        String tx = TestTx.buildBase64(TestTx.Spec.defaults().withValidityStart(999_900L));
+        chain.currentSlot = 999_700L;
         VerifyResponse r = scheme.verify(payload(tx, TestTx.NONCE, req), req);
         assertThat(r.invalidReason()).isEqualTo(ErrorCodes.NOT_YET_VALID);
     }

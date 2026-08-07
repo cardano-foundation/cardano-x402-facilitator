@@ -11,7 +11,14 @@ public sealed interface UtxoState {
     record Unspent(String ownerAddress) implements UtxoState {
     }
 
-    record Spent() implements UtxoState {
+    /**
+     * Spent, or never created — {@code ownerAddress} is null in the latter case.
+     *
+     * <p>The owner is reported because client submission needs it: the payment
+     * has already consumed its own nonce by the time the facilitator sees it,
+     * so the payer cannot be read from a live UTXO.
+     */
+    record Spent(String ownerAddress) implements UtxoState {
     }
 
     record Unknown() implements UtxoState {

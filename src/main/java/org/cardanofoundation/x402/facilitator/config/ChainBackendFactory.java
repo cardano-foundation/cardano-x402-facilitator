@@ -36,12 +36,12 @@ public class ChainBackendFactory {
         }
         String baseUrl = bf.baseUrl().endsWith("/") ? bf.baseUrl() : bf.baseUrl() + "/";
         BFBackendService backend = new BFBackendService(baseUrl, bf.projectId() == null ? "" : bf.projectId());
-        
         // x402.settle is optional (absent = code defaults), so props.settle() may be null.
         Duration pollInterval = props.settle() == null
                 ? Duration.ofSeconds(3) : props.settle().pollIntervalOrDefault();
         return new ChainBackend(
-                new BlockfrostChainService(backend, pollInterval),
+                new BlockfrostChainService(backend, pollInterval, baseUrl,
+                        bf.projectId() == null ? "" : bf.projectId()),
                 new BlockfrostProtocolParamsProvider(backend),
                 clock);
     }

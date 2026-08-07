@@ -74,6 +74,33 @@ pipeline with a misleading payer-blaming error.
     *live protocol limit*, so a tx that could never be accepted by a node is
     rejected here rather than at submission.
 
+## Submission mode — who broadcasts
+
+Read from the **canonical requirements**, never the client-echoed `accepted`:
+the policy is the server's to set, not the payer's to choose.
+
+- `extra.submissionPolicy` is `server` (default), `client`, or `either`.
+- `payload.submissionMode` is `server` (default) or `client`; `either` is a
+  policy and never a valid payload mode.
+- A mode the policy does not admit → `..._submission_mode_mismatch`.
+- A malformed policy or confirmation policy → `invalid_exact_cardano_requirements_policy`.
+
+**Client mode inverts two of the checks below**, so it takes its own path:
+
+- The payer already broadcast, so the facilitator authenticates instead of
+  submitting. `checkInclusion` must report the transaction in a block or a
+  mempool; no record → `..._evidence_mismatch`. The evidence is keyed by
+  transaction id, which binds it to these exact bytes.
+- Script witnesses are refused → `..._phase2_invalid`. The `is_valid` flag lives
+  *outside* the transaction body, so it is not covered by the transaction id: a
+  client could broadcast the failing form and hand over an identical payload
+  claiming valid, and evidence keyed by that id would point at a transaction
+  that consumed collateral and created none of its declared outputs. Only a
+  script-running transaction can be phase-2 invalid, so refusing them closes the
+  hole without trusting the provider to report it.
+- Once the ledger has accepted the transaction, `ttl_expired` no longer applies
+  — it describes a decision the chain has already made.
+
 ## Stage D — replay protection
 
 This is the part that stops a payment being spent twice, so it's worth reading
@@ -86,6 +113,15 @@ closely.
 19. The nonce UTxO is not `Unspent` → `..._nonce_not_on_chain`
 20. Any other input is `Spent` → `..._input_not_available`
 21. **D5** payer is not authorized → `..._payer_not_witness`
+
+**Rules 19 and 20 are server-mode only.** A client-submitted payment has already
+consumed its own inputs by the time the facilitator sees it, so requiring them
+unspent would reject exactly the payments that settled. Inclusion evidence is
+what stands in for the unspent-input guarantee there, and the payer is resolved
+from the spent nonce's owner — `UtxoState.Spent` carries it, because the
+producing transaction names the owner whether or not the output still exists. An
+output that never existed reports no owner and is rejected as
+`..._nonce_not_on_chain`.
 
 **UTxO state is tri-state — `Unspent`, `Spent`, `Unknown` — and the third one
 carries the safety property.** An indexer that hasn't caught up cannot
@@ -149,11 +185,23 @@ No additional checks — address-to-address is fully covered by Stage E.
 ## `masumi` — `vested_pay` escrow
 
 Verifies that funds are locked into the Masumi escrow contract correctly, rather
-than merely sent to its address. Rules M1–M9, in order:
+than merely sent to its address.
+
+**Consent is checked before structure.** A datum matching terms nobody signed is
+worthless, so the seller's authorization is verified first:
 
 | # | Check | Code |
 |---|---|---|
-| M1 | `extra.contractAddress` present and ≡ `payTo` | `..._masumi_contract_mismatch` |
+| M0a | `extra` is shaped as the spec requires (closed object — an unknown field is a rejection) | `..._masumi_schema` |
+| M0b | `inputCommitment` recomputes, and `terms.inputHash` agrees with it | `..._masumi_commitment` |
+| M0c | The seller's CIP-8 `COSE_Sign1` verifies over `termsDigest`, bound to `terms.sellerAddress` by Blake2b-224 | `..._masumi_authorization` |
+| M0d | `blockchainIdentifier`, when present, decodes and names the same escrow | `..._masumi_identifier` |
+
+Then the lock itself, rules M1–M9 in order:
+
+| # | Check | Code |
+|---|---|---|
+| M1 | The escrow address is **derived** from the deployment parameters, and `payTo` must equal it | `..._masumi_contract_mismatch` |
 | M1b | `payTo`'s script hash is in the configured allowlist (if set) | `..._masumi_contract_mismatch` |
 | M2 | An output to `payTo` carries an inline datum | `..._masumi_datum_missing` |
 | — | That output carries **no** reference script | `..._masumi_reference_script` |
@@ -215,11 +263,18 @@ For the genuinely optional fields, an undeclared field is not an assertion, so
 there is nothing to disagree with. Callers that want one enforced must declare
 it.
 
-> **M1b is off unless you configure it.** With no allowlist, M1 only proves the
-> output went to the address the *requirements* named — a resource server naming
-> a hostile address still passes. Set
-> `x402.masumi.allowed-script-hashes.<network>` in production. This is why it
-> appears on the
+**M1 derives, it does not trust.** The facilitator applies the deployment
+parameters (`requiredAdmins`, `adminVkeys`, `cooldownPeriod`) to the canonical
+`vested_pay` blueprint, computes the script address itself, and requires `payTo`
+to equal it. A resource server naming a look-alike escrow — different admins, so
+a different trust domain — fails here, with or without an allowlist. Preview has
+no canonical deployment, so a 402 for that network must declare one explicitly.
+
+> **M1b narrows further, and is off unless you configure it.** The allowlist
+> pins which escrow *deployments* this facilitator will serve, on top of the
+> derivation M1 already enforces. Set
+> `x402.masumi.allowed-script-hashes.<network>` in production if you want to
+> serve only your own deployment. It appears on the
 > [mainnet checklist](../deploy/README.md#mainnet-readiness-checklist).
 
 ## `script` — arbitrary Plutus lock

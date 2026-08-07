@@ -1,5 +1,6 @@
 package org.cardanofoundation.x402.facilitator.controller;
 
+import java.util.Arrays;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -75,7 +76,7 @@ class FacilitatorControllerTest {
     @Test
     void oversizedContentLengthIs413() throws Exception {
         byte[] big = new byte[70000];
-        java.util.Arrays.fill(big, (byte) 'a');
+        Arrays.fill(big, (byte) 'a');
         mvc.perform(post("/verify").contentType(APPLICATION_JSON).content(big))
                 .andExpect(status().isPayloadTooLarge());
     }

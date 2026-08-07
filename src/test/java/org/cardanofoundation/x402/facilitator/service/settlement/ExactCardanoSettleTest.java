@@ -1,5 +1,8 @@
 package org.cardanofoundation.x402.facilitator.service.settlement;
 
+import java.util.Base64;
+import java.util.ArrayList;
+import org.cardanofoundation.x402.facilitator.chain.ShelleyNetworkClock;
 import org.cardanofoundation.x402.facilitator.model.ErrorCodes;
 import org.cardanofoundation.x402.facilitator.model.chain.SubmissionResult;
 import org.cardanofoundation.x402.facilitator.model.entity.SettlementRecord;
@@ -64,9 +67,10 @@ class ExactCardanoSettleTest {
         jdbc.update("DELETE FROM facilitator.settlement", Map.of());
         chain = new FakeChainService();
         chain.unspent.put(TestTx.NONCE, TestTx.PAYER_ADDRESS);
-        chain.currentSlot = 500_000L;
+        chain.currentSlot = 999_700L;
         scheme = new ExactCardanoScheme(chain, chain, new CardanoTransactionDecoder(),
-                List.of(new DefaultTransferVerifier()), 32768);
+                List.of(new DefaultTransferVerifier()), 32768,
+                ShelleyNetworkClock.forNetwork("cardano:preprod", null));
         service = service(false);
     }
 
@@ -133,7 +137,7 @@ class ExactCardanoSettleTest {
         CountDownLatch start = new CountDownLatch(1);
         AtomicInteger successes = new AtomicInteger();
         AtomicInteger duplicates = new AtomicInteger();
-        List<Future<?>> futures = new java.util.ArrayList<>();
+        List<Future<?>> futures = new ArrayList<>();
         for (int i = 0; i < threads; i++) {
             futures.add(pool.submit(() -> {
                 start.await();
@@ -170,7 +174,7 @@ class ExactCardanoSettleTest {
         SettleResponse fail = service.settle(payload(tx), requirements());
         assertThat(fail.errorReason()).isEqualTo(ErrorCodes.SETTLEMENT_FAILED);
         String txHash = com.bloxbean.cardano.client.transaction.util.TransactionUtil
-                .getTxHash(java.util.Base64.getDecoder().decode(tx)).toLowerCase();
+                .getTxHash(Base64.getDecoder().decode(tx)).toLowerCase();
         assertThat(repo.find(txHash).orElseThrow().status()).isEqualTo(SettlementRecord.Status.FAILED);
     }
 
@@ -195,7 +199,7 @@ class ExactCardanoSettleTest {
     @Test
     void confirmationTimeoutKeepsRowAndReportsNotConfirmedWithoutStatusClaim() {
         String tx = TestTx.buildBase64(TestTx.Spec.defaults());
-        chain.includedDepth = 0; // never included
+        chain.includedDepth = FakeChainService.NOT_SEEN; // never included
         SettleResponse r = service.settle(payload(tx), requirements());
         assertThat(r.success()).isFalse();
         assertThat(r.errorReason()).isEqualTo(ErrorCodes.SETTLEMENT_NOT_CONFIRMED);
@@ -211,7 +215,7 @@ class ExactCardanoSettleTest {
     void staleClaimIsReclaimable() {
         String tx = TestTx.buildBase64(TestTx.Spec.defaults());
         String txHash = com.bloxbean.cardano.client.transaction.util.TransactionUtil
-                .getTxHash(java.util.Base64.getDecoder().decode(tx)).toLowerCase();
+                .getTxHash(Base64.getDecoder().decode(tx)).toLowerCase();
         // simulate an attempt that died in the claim->submit window, older than the ttl
         repo.insertClaim(new SettlementRecord(txHash, UUID.randomUUID(), "digest", "cardano:preprod",
                 SettlementRecord.Status.CLAIMED, null, null, null, null, null, null, null,
@@ -249,7 +253,7 @@ class ExactCardanoSettleTest {
         String tx = TestTx.buildBase64(TestTx.Spec.defaults());
         SettleResponse first = replaying.settle(payload(tx), requirements());
         assertThat(first.success()).isTrue();
-        chain.includedDepth = 0; // rolled back
+        chain.includedDepth = FakeChainService.NOT_SEEN; // rolled back
         SettleResponse replayed = replaying.settle(payload(tx), requirements());
         assertThat(replayed.success()).isFalse();
         assertThat(replayed.errorReason()).isEqualTo(ErrorCodes.SETTLEMENT_NOT_CONFIRMED);
@@ -260,7 +264,7 @@ class ExactCardanoSettleTest {
     @Test
     void duplicateProbeLookupErrorPreservesState() {
         String tx = TestTx.buildBase64(TestTx.Spec.defaults());
-        chain.includedDepth = 0;
+        chain.includedDepth = FakeChainService.NOT_SEEN;
         SettleResponse first = service.settle(payload(tx), requirements()); // -> NOT_CONFIRMED
         assertThat(first.errorReason()).isEqualTo(ErrorCodes.SETTLEMENT_NOT_CONFIRMED);
         chain.throwOnInclusionCheck = true;
@@ -287,7 +291,7 @@ class ExactCardanoSettleTest {
     void expiredRowWithTxActuallyOnChainPromotesOnLookup() {
         String tx = TestTx.buildBase64(TestTx.Spec.defaults());
         String txHash = com.bloxbean.cardano.client.transaction.util.TransactionUtil
-                .getTxHash(java.util.Base64.getDecoder().decode(tx)).toLowerCase();
+                .getTxHash(Base64.getDecoder().decode(tx)).toLowerCase();
         UUID attempt = UUID.randomUUID();
         repo.insertClaim(new SettlementRecord(txHash, attempt, "d", "cardano:preprod",
                 SettlementRecord.Status.CLAIMED, TestTx.PAYER_ADDRESS, null, null, null, null,
@@ -324,8 +328,8 @@ class ExactCardanoSettleTest {
                 Instant.now().minus(Duration.ofHours(30)));
 
         chain.inclusionDepthByHash.put(h1, 2);
-        chain.inclusionDepthByHash.put(h2, 0);
-        chain.inclusionDepthByHash.put(h3, 0);
+        chain.inclusionDepthByHash.put(h2, FakeChainService.NOT_SEEN);
+        chain.inclusionDepthByHash.put(h3, FakeChainService.NOT_SEEN);
         chain.currentSlot = 10_000L; // > h2 ttl 100 + margin
 
         reconciler.sweep();
@@ -334,7 +338,7 @@ class ExactCardanoSettleTest {
         assertThat(repo.find(h3).orElseThrow().status()).isEqualTo(SettlementRecord.Status.EXPIRED);
 
         // rollback: recent CONFIRMED not on chain anymore -> demote
-        chain.inclusionDepthByHash.put(h1, 0);
+        chain.inclusionDepthByHash.put(h1, FakeChainService.NOT_SEEN);
         reconciler.sweep();
         assertThat(repo.find(h1).orElseThrow().status()).isEqualTo(SettlementRecord.Status.SUBMITTED);
     }
