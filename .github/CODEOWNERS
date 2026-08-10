@@ -1,0 +1,4 @@
+.github/* @flowftw
+Earthfile @flowftw
+Dockerfile @flowftw
+docker* @flowftw

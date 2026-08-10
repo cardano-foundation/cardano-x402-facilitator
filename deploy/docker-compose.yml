@@ -40,7 +40,7 @@ services:
   facilitator:
     build:
       context: ..
-      dockerfile: deploy/Dockerfile
+      dockerfile: Dockerfile
     profiles: [light]
     depends_on:
       postgres:
@@ -159,7 +159,7 @@ services:
   facilitator-node:
     build:
       context: ..
-      dockerfile: deploy/Dockerfile
+      dockerfile: Dockerfile
     profiles: [full]
     depends_on:
       postgres:
@@ -219,7 +219,7 @@ services:
   facilitator-yano:
     build:
       context: ..
-      dockerfile: deploy/Dockerfile
+      dockerfile: Dockerfile
     profiles: [yano]
     depends_on:
       postgres:
