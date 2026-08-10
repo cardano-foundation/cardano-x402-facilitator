@@ -38,3 +38,8 @@ docker-publish:
       RUN if [ "$PUSH" = "true" ]; then docker push ${registry}/${IMAGE_NAME}:${EARTHLY_GIT_SHORT_HASH}; fi
     END
   END
+
+runtime:
+  ARG EARTHLY_TARGET_NAME
+  FROM DOCKERFILE -f Dockerfile --target ${EARTHLY_TARGET_NAME} --build-arg GITLAB_MAVEN_REGISTRY_URL .
+  SAVE IMAGE ${DOCKER_IMAGE_PREFIX}-${EARTHLY_TARGET_NAME}:latest
