@@ -2,6 +2,8 @@ server:
   port: 4022
 
 spring:
+  config:
+    import: optional:${NETWORKS_FILE:}
   threads:
     virtual:
       enabled: true
@@ -27,7 +29,7 @@ management:
 
 x402:
   networks:
-    - id: "cardano:preprod"
+    - id: ${X402_NETWORK_ID:cardano:preprod}
       chain:
         blockfrost:
           # Hosted Blockfrost, OR a standalone yaci-store's Blockfrost-compatible

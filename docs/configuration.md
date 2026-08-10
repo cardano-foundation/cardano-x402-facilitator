@@ -98,6 +98,63 @@ any number of networks may point at hosted Blockfrost, a standalone
 yaci-store, or a mix, independently. It's the same client either way,
 selected purely by `base-url`.
 
+### Serving several networks
+
+`x402.networks` is a list, and everything downstream is keyed by network id — one
+chain backend, scheme, settlement service and `/supported` entry per network. So
+serving mainnet and preprod from one process needs no code change, only a second
+list entry.
+
+Two things stay **global** rather than per network, and both matter if you mix
+them: the whole `x402.settle` block (`confirmation-depth`, `accept-mempool`,
+timeouts) applies to every network, and `/supported` advertises one
+`l1Confirmations` range for all of them. You cannot currently run mainnet at
+depth 3 while preprod runs at 1.
+
+### Loading networks from an external file
+
+`application.yml` ships one preprod entry as a development default and imports an
+optional override:
+
+```yaml
+spring:
+  config:
+    import: optional:${NETWORKS_FILE:}
+```
+
+Point `NETWORKS_FILE` at a file shaped like
+[`docs/networks_example.yml`](networks_example.yml) — the natural fit for a
+Kubernetes ConfigMap or a Docker secret, and it keeps project ids out of the
+image:
+
+```bash
+NETWORKS_FILE=file:/etc/x402/networks.yml java -jar facilitator.jar
+```
+
+Three behaviours worth knowing before you rely on it — all verified against
+Spring Boot 3.5, not assumed:
+
+- **The list is replaced, not merged.** An external file defining `x402.networks`
+  discards the entry in `application.yml` entirely. Whatever you point at must
+  name *every* network you want served — including preprod, if you still want it.
+- **The `file:` prefix is required.** `NETWORKS_FILE=./networks.yml` is **silently
+  ignored** — you get the built-in preprod entry and no error. Use
+  `file:./networks.yml`.
+- **A missing file is silently ignored too**, because of the `optional:` prefix.
+  That is what lets the variable be unset, but it also means a typo'd path
+  degrades quietly to the preprod default instead of failing.
+
+The last two make the failure mode "wrong networks served", not "won't start", so
+confirm what actually loaded rather than assuming:
+
+```bash
+curl -s localhost:4022/supported | jq '.kinds[].network'
+```
+
+If the file is unset *and* you have removed the default entry from
+`application.yml`, startup fails with `x402.networks must contain at least one
+network entry` — the message names the property, not `NETWORKS_FILE`.
+
 ## Verification
 
 | Key | Default | Notes |

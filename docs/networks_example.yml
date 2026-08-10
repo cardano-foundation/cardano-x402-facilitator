@@ -1,0 +1,30 @@
+# Example external network configuration.
+#
+# Load it by pointing NETWORKS_FILE at this file, WITH the `file:` prefix —
+# a bare path is silently ignored:
+#
+#   NETWORKS_FILE=file:/etc/x402/networks.yml
+#
+# This REPLACES `x402.networks` from application.yml rather than adding to it,
+# so list every network you want served. Confirm what actually loaded with:
+#
+#   curl -s localhost:4022/supported | jq '.kinds[].network'
+#
+# See docs/configuration.md for the full reference. Everything else — settlement,
+# verification, security — stays in application.yml and is global, not per network.
+x402:
+  networks:
+    - id: cardano:mainnet
+      chain:
+        blockfrost:
+          # Hosted Blockfrost, or a standalone yaci-store's Blockfrost-compatible
+          # endpoint. project-id is required for the former, ignored by the latter.
+          base-url: https://cardano-mainnet.blockfrost.io/api/v0
+          # Prefer a placeholder over a literal so the id stays out of source control:
+          #   project-id: ${BLOCKFROST_PROJECT_ID_MAINNET:}
+          project-id: project_id_goes_here
+    - id: cardano:preprod
+      chain:
+        blockfrost:
+          base-url: https://cardano-preprod.blockfrost.io/api/v0
+          project-id: project_id_goes_here

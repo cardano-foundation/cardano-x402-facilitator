@@ -143,6 +143,18 @@ x402:
           project-id: ${BLOCKFROST_PROJECT_ID}
 ```
 
+`x402.networks` is a list, so one process can serve several networks — each gets
+its own chain backend, scheme, settlement service and `/supported` entry. To keep
+them out of the image, point `NETWORKS_FILE` at an external file shaped like
+[docs/networks_example.yml](docs/networks_example.yml):
+
+```bash
+NETWORKS_FILE=file:/etc/x402/networks.yml java -jar facilitator.jar
+```
+
+It **replaces** the list in `application.yml` rather than adding to it, and the
+`file:` prefix is required — a bare path is silently ignored.
+
 API keys, rate limiting, and CORS are **off by default** — the service is open
 unless you opt in. Full reference: [docs/configuration.md](docs/configuration.md).
 
