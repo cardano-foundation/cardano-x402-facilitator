@@ -1,8 +1,8 @@
 VERSION 0.8
 
-ARG --global ALL_BUILD_TARGETS="runtime"
+ARG --global ALL_BUILD_TARGETS="facilitator"
 
-ARG --global DOCKER_IMAGE_PREFIX="cardano-x402-facilitator"
+ARG --global DOCKER_IMAGE_PREFIX="cardano-x402"
 ARG --global DOCKER_IMAGES_EXTRA_TAGS=""
 ARG --global DOCKER_REGISTRIES="docker.io/cardanofoundation"
 ARG --global GITLAB_MAVEN_REGISTRY_URL=""
@@ -39,7 +39,7 @@ docker-publish:
     END
   END
 
-runtime:
+facilitator:
   ARG EARTHLY_TARGET_NAME
-  FROM DOCKERFILE -f Dockerfile --target ${EARTHLY_TARGET_NAME} --build-arg GITLAB_MAVEN_REGISTRY_URL .
+  FROM DOCKERFILE -f Dockerfile --target runtime --build-arg GITLAB_MAVEN_REGISTRY_URL .
   SAVE IMAGE ${DOCKER_IMAGE_PREFIX}-${EARTHLY_TARGET_NAME}:latest
