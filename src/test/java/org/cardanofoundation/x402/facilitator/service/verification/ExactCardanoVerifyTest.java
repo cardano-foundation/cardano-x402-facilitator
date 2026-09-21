@@ -132,7 +132,7 @@ class ExactCardanoVerifyTest {
         PaymentRequirements req = requirements("cardano:preprod", TestTx.PAY_TO, "2.5", "lovelace");
         VerifyResponse r = scheme.verify(
                 payload(TestTx.buildBase64(TestTx.Spec.defaults()), TestTx.NONCE, req), req);
-        assertThat(r.invalidReason()).isEqualTo(ErrorCodes.INVALID_PAYLOAD);
+        assertThat(r.invalidReason()).isEqualTo(ErrorCodes.REQUIREMENTS_INVALID);
     }
 
     @Test
@@ -140,7 +140,7 @@ class ExactCardanoVerifyTest {
         PaymentRequirements req = requirements("cardano:preprod", TestTx.PAY_TO, "-2000000", "lovelace");
         VerifyResponse r = scheme.verify(
                 payload(TestTx.buildBase64(TestTx.Spec.defaults()), TestTx.NONCE, req), req);
-        assertThat(r.invalidReason()).isEqualTo(ErrorCodes.INVALID_PAYLOAD);
+        assertThat(r.invalidReason()).isEqualTo(ErrorCodes.REQUIREMENTS_INVALID);
     }
 
     @Test
@@ -148,7 +148,7 @@ class ExactCardanoVerifyTest {
         PaymentRequirements req = requirements("cardano:preprod", TestTx.PAY_TO, "2000000", "not-an-asset");
         VerifyResponse r = scheme.verify(
                 payload(TestTx.buildBase64(TestTx.Spec.defaults()), TestTx.NONCE, req), req);
-        assertThat(r.invalidReason()).isEqualTo(ErrorCodes.INVALID_PAYLOAD);
+        assertThat(r.invalidReason()).isEqualTo(ErrorCodes.REQUIREMENTS_INVALID);
     }
 
     @Test

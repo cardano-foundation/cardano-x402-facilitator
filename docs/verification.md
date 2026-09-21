@@ -1,321 +1,120 @@
 # Verification Rules
 
-What `POST /verify` actually checks, in the order it checks it. Settlement runs
-the same pipeline before it submits anything, so everything here applies to
-`/settle` too.
-
-Implementation: `service/verification/ExactCardanoScheme.java`, plus one verifier
-per `assetTransferMethod` under `service/verification/method/`.
-
-## Design constraints worth knowing
-
-- **The facilitator never signs.** It receives an already-signed transaction and
-  decides whether to accept it. There is no key material in this service.
-- **Checks are ordered cheapest-first.** Envelope and decode are pure CPU; chain
-  I/O only happens once the payload is structurally credible. A malformed
-  payload never costs a Blockfrost call.
-- **Every rejection is a `200 OK` with `isValid: false`.** See [api.md](api.md).
-
-## Pipeline overview
-
-| Stage | Does | Chain I/O |
-|---|---|---|
-| A | Envelope: version, scheme, network, payload shape, requirement sanity | no |
-| B | Decode CBOR, network id, signatures | no |
-| C | Validity window and protocol limits | yes |
-| D | Replay protection and payer authorization | yes |
-| E | Value transfer + per-method dispatch | yes (protocol params) |
-
----
-
-## Stage A — envelope
-
-No I/O. Ordered:
-
-1. `paymentPayload.x402Version != 2` → `..._unsupported_version`
-2. `accepted` missing, or `accepted.scheme`/`paymentRequirements.scheme` ≠ `"exact"` → `unsupported_scheme`
-3. `normalize(accepted.network)` ≠ `normalize(requirements.network)` → `network_mismatch`
-4. `requirements.network` not a supported Cardano network → `network_mismatch`
-5. `payload.transaction` or `payload.nonce` missing/empty → `invalid_exact_cardano_payload`
-6. `nonce` not matching `^[0-9a-fA-F]{64}#\d+$` → `..._nonce_invalid`
-7. **A4** base64 length implies more than `x402.verification.max-tx-bytes` decoded → `invalid_exact_cardano_payload`
-
-   Estimated from the base64 length (`len * 3 / 4`) *before* decoding, so an
-   oversized body is rejected without allocating it.
-8. **A5** requirement sanity — all → `invalid_exact_cardano_payload`:
-   - `amount` not an integer string (`"amount is not an integer string"`)
-   - `amount` ≤ 0 (`"amount must be positive"`)
-   - `asset` neither `lovelace` nor `^[0-9a-fA-F]{56}\.[0-9a-fA-F]{0,64}$` with an
-     even-length name part
-   - `payTo` not a Shelley address whose bech32 prefix matches the network
-     (`addr` on mainnet, `addr_test` otherwise)
-
-A5 exists because the requirements come from the *resource server*, not the
-payer. A typo'd `payTo` or a negative `amount` would otherwise fail deep in the
-pipeline with a misleading payer-blaming error.
-
-## Stage B — decode
-
-9. CBOR won't decode → `..._transaction_decode_failed`
-10. Tx network id present and ≠ the expected id (mainnet 1, testnets 0) → `..._network_id_mismatch`
-11. No vkey witnesses **and** no script witnesses → `..._unsigned`
-12. Signature check fails → `..._invalid_signature`
-
-## Stage C — time and protocol limits
-
-13. If the tx carries a validity interval, fetch the current slot:
-    - lookup fails → `exact_cardano_facilitator_chain_lookup_failed`
-    - `ttlSlot <= currentSlot` → `..._ttl_expired`
-    - `validityStartSlot > currentSlot` → `..._not_yet_valid`
-14. Protocol params fetch fails → `exact_cardano_facilitator_chain_lookup_failed`
-15. **C3** serialized size > `min(max-tx-bytes, protocol maxTxSize)` → `invalid_exact_cardano_payload`
-
-    A4 bounds work before decoding; C3 re-checks the true size against the
-    *live protocol limit*, so a tx that could never be accepted by a node is
-    rejected here rather than at submission.
-
-## Submission mode — who broadcasts
-
-Read from the **canonical requirements**, never the client-echoed `accepted`:
-the policy is the server's to set, not the payer's to choose.
-
-- `extra.submissionPolicy` is `server` (default), `client`, or `either`.
-- `payload.submissionMode` is `server` (default) or `client`; `either` is a
-  policy and never a valid payload mode.
-- A mode the policy does not admit → `..._submission_mode_mismatch`.
-- A malformed policy or confirmation policy → `invalid_exact_cardano_requirements_policy`.
-
-**Client mode inverts two of the checks below**, so it takes its own path:
-
-- The payer already broadcast, so the facilitator authenticates instead of
-  submitting. `checkInclusion` must report the transaction in a block or a
-  mempool; no record → `..._evidence_mismatch`. The evidence is keyed by
-  transaction id, which binds it to these exact bytes.
-- Script witnesses are refused → `..._phase2_invalid`. The `is_valid` flag lives
-  *outside* the transaction body, so it is not covered by the transaction id: a
-  client could broadcast the failing form and hand over an identical payload
-  claiming valid, and evidence keyed by that id would point at a transaction
-  that consumed collateral and created none of its declared outputs. Only a
-  script-running transaction can be phase-2 invalid, so refusing them closes the
-  hole without trusting the provider to report it.
-- Once the ledger has accepted the transaction, `ttl_expired` no longer applies
-  — it describes a decision the chain has already made.
-
-## Stage D — replay protection
+Compatibility target: `@x402/cardano` 2.26.0 at upstream main
+`6323ec74c85607e706e0722dd294365a7fb57768`. See [upgrade notes](upstream-compatibility.md).
+
+`POST /verify` is read-only. Fresh settlement uses the same verification before
+claiming and submitting. Invalid payments return HTTP 200 with `isValid: false`;
+transport and framework failures use the statuses in [api.md](api.md).
+
+## Envelope, encodings and signatures
+
+- Require x402 v2, the exact scheme and matching normalized Cardano networks.
+- Require a transaction and an input out-reference nonce. The nonce must actually
+  occur among the transaction inputs, and duplicate transaction inputs fail.
+- Amounts are canonical positive decimal strings; assets are lovelace or a
+  lowercase policy/name unit. Base64 must be canonical and padded as necessary.
+- Enforce size limits before decoding and again against live protocol parameters;
+  bound transaction input/output counts and script parameter work.
+- Hash the original transaction body bytes. Verify every supplied vkey signature,
+  required signer, and the nonce owner's payment credential.
+- Reject an envelope carrying `is_valid: false` and inconsistent network tags.
+- Confirmation policy is a closed object containing only integer
+  `l1Confirmations` in `-1..20`. Omission means `1`; explicit null fails.
+
+All fresh payments use facilitator submission. Legacy mode metadata cannot choose
+an alternate verification or submission path. Masumi uses a closed schema and
+rejects removed `submissionPolicy` and `terms.settlementPolicy` fields.
+
+## Pre-broadcast ledger checks
+
+Check the validity interval against the current slot and the requested timeout.
+Resolve every input as `Unspent`, including its authenticated owner, coin and
+native-asset quantities; unknown state or provider failure never means absence.
+
+For ordinary transfers, require exact conservation of lovelace (outputs plus
+fee) and every native asset, authorized input owners, and a fee at least
+`minFeeCoefficient * serializedBytes + minFeeConstant`. Check every output's
+network and min-UTxO, including change. Missing trustworthy input quantities fail
+with `exact_cardano_facilitator_input_value_unavailable`.
+
+The built-in validator handles ordinary transfers. Minting, withdrawals,
+certificates, governance operations, reference/collateral inputs and script
+execution require an operator-supplied `Phase1Validator` Spring bean that performs
+the complete additional ledger validation. Without it, such bodies fail closed.
+The hook receives immutable decoded data, input snapshots, protocol parameters
+and the network. It runs for ordinary transfers too when installed.
+
+## Durable retries
+
+`verifyBroadcast` retains envelope, hash, signature, payer, network, nonce,
+recipient, asset and method checks. It skips checks that only make sense before
+broadcast, such as input availability, TTL freshness and input/output balance
+using live UTxOs. Only settlement calls it after durable local provenance or
+independently authenticated canonical evidence establishes a broadcast.
+
+This permits a correctly submitted transaction to settle after consuming its own
+inputs or passing its original TTL. It does not make standalone `/verify` accept
+an arbitrary spent transaction. Legacy rows cannot establish acceptance merely
+from their old status. Blockfrost receipts with `valid_contract: false` never
+establish successful payment evidence.
+
+## Transfer methods
+
+The method comes from canonical `paymentRequirements.extra`, never from the
+payer's echoed `accepted.extra`. Each method applies after the common recipient,
+asset, amount and minimum-UTxO checks.
+
+### `default`
+
+At least one output must pay the requested asset and amount to the recipient.
+The amount may exceed the requested minimum.
+
+### `masumi`
+
+The closed, bounded schema requires `inputCommitment`, signed `terms`, CIP-8
+`referenceKey`/`referenceSignature`, and `blockchainIdentifier`.
+
+Before inspecting the lock, recompute part digests, inputHash and termsDigest;
+validate the seller's Ed25519 COSE authorization, header/key consistency and
+address binding. JCS content explicitly equal to JSON null is hashed as null;
+an omitted content field permits a precomputed digest. Raw content must be
+canonical unpadded base64url. Identifier decoding is bounded and compares all
+six components: seller nonce, agent identifier, buyer nonce, reference signature,
+reference key and escrow address.
+
+The derived escrow must match `payTo`. Canonical deployments are built in.
+An explicit deployment additionally requires the operator's allowed script hash
+or `MasumiDeploymentValidator` approval. If terms claim an `agentIdentifier`,
+`MasumiRegistryValidator` must independently authenticate it for the network and
+resource endpoint. Neither missing validator defaults to approval.
+
+Require exactly one output to the escrow and an inline lock datum with no
+reference script. Enforce fresh `FundsLocked` state, empty result/cooldowns,
+key credentials, signed term matching, deadline order and transaction TTL before
+payByTime. The buyer's payment key must match a valid payer witness; an unrelated
+stake credential cannot stand in for that key.
+
+For ADA, require the exact requested amount plus collateral, with no native
+assets. For tokens, require the exact quantity of the sole requested token.
+Collateral bounds and the post-result min-UTxO calculation apply to both.
+Settlement atomically claims the seller-signed terms digest together with the
+transaction hash so another transaction cannot consume the same quote.
+
+### `script`
 
-This is the part that stops a payment being spent twice, so it's worth reading
-closely.
+Reconstruct the script address from its hash or descriptor. Supplied hash and
+script must agree. UPLC parameters use strict bounded scalar encodings for
+bytes, string, bigint, integer and boolean; unsafe numeric values are rejected.
+Aiken parameter application is pinned by conformance vectors.
 
-16. `nonce` is not among the tx's inputs → `..._nonce_not_in_inputs`
-17. Any UTxO lookup throws → `exact_cardano_facilitator_chain_lookup_failed`
-18. Any input resolves to `Unknown` → `exact_cardano_facilitator_chain_lookup_failed`
-    (`"input state unknown (indexer sync horizon)"`)
-19. The nonce UTxO is not `Unspent` → `..._nonce_not_on_chain`
-20. Any other input is `Spent` → `..._input_not_available`
-21. **D5** payer is not authorized → `..._payer_not_witness`
-
-**Rules 19 and 20 are server-mode only.** A client-submitted payment has already
-consumed its own inputs by the time the facilitator sees it, so requiring them
-unspent would reject exactly the payments that settled. Inclusion evidence is
-what stands in for the unspent-input guarantee there, and the payer is resolved
-from the spent nonce's owner — `UtxoState.Spent` carries it, because the
-producing transaction names the owner whether or not the output still exists. An
-output that never existed reports no owner and is rejected as
-`..._nonce_not_on_chain`.
-
-**UTxO state is tri-state — `Unspent`, `Spent`, `Unknown` — and the third one
-carries the safety property.** An indexer that hasn't caught up cannot
-distinguish "never existed" from "not indexed yet". Collapsing `Unknown` into
-either answer is a real bug in both directions: into `Spent` and you reject
-honest payments; into `Unspent` and you accept replays. So `Unknown` is neither
-— it's a retryable `chain_lookup_failed`. **An error is never absence.**
-
-**D5** (`checkPayerAuthorization`) closes an authorization gap: without it, an
-attacker could name someone else as the payer. It rejects when the payer address
-is unparseable or Byron, has an empty payment credential, is a key credential
-absent from the verified witness key hashes, or is a script credential with no
-script witness.
-
-## Stage E — value transfer and method dispatch
-
-Iterates the outputs and takes the first that fully covers the amount. For that
-output:
-
-- Below the min-UTxO floor (`MinAdaCalculator`) → `..._min_utxo_insufficient`
-- Dispatch to the method verifier (below); its error is returned verbatim
-- Otherwise → `isValid: true` with the resolved payer
-
-If no output matched, the failure is attributed by how far it got:
-
-| Condition | Code |
-|---|---|
-| No output pays `payTo` | `..._recipient_mismatch` |
-| Output exists but wrong asset | `..._asset_mismatch` |
-| Right recipient and asset, too little | `..._amount_insufficient` |
-
-Unexpected exceptions become `..._verification_error`; `ChainLookupException`
-becomes `exact_cardano_facilitator_chain_lookup_failed`.
-
----
-
-## Choosing an `assetTransferMethod`
-
-```java
-requirements.extra.assetTransferMethod   // "default" | "masumi" | "script"
-```
-
-Absent `extra`, or absent key → `"default"`. Unknown value → `unsupported_scheme`
-(`"assetTransferMethod '<x>' is not supported by this facilitator"`).
-
-**Read from `paymentRequirements.extra`, never `paymentPayload.accepted.extra`.**
-The payload half is payer-supplied; letting it pick the method would let a payer
-downgrade `masumi` escrow rules to `default`. The canonical requirements are the
-only trustworthy source.
-
-The verifier runs **only** for the output that already passed
-address + asset + amount + min-UTxO. Method rules are additive on top of the
-shared checks, never a replacement.
-
----
-
-## `default`
-
-No additional checks — address-to-address is fully covered by Stage E.
-
-## `masumi` — `vested_pay` escrow
-
-Verifies that funds are locked into the Masumi escrow contract correctly, rather
-than merely sent to its address.
-
-**Consent is checked before structure.** A datum matching terms nobody signed is
-worthless, so the seller's authorization is verified first:
-
-| # | Check | Code |
-|---|---|---|
-| M0a | `extra` is shaped as the spec requires (closed object — an unknown field is a rejection) | `..._masumi_schema` |
-| M0b | `inputCommitment` recomputes, and `terms.inputHash` agrees with it | `..._masumi_commitment` |
-| M0c | The seller's CIP-8 `COSE_Sign1` verifies over `termsDigest`, bound to `terms.sellerAddress` by Blake2b-224 | `..._masumi_authorization` |
-| M0d | `blockchainIdentifier`, when present, decodes and names the same escrow | `..._masumi_identifier` |
-
-Then the lock itself, rules M1–M9 in order:
-
-| # | Check | Code |
-|---|---|---|
-| M1 | The escrow address is **derived** from the deployment parameters, and `payTo` must equal it | `..._masumi_contract_mismatch` |
-| M1b | `payTo`'s script hash is in the configured allowlist (if set) | `..._masumi_contract_mismatch` |
-| M2 | An output to `payTo` carries an inline datum | `..._masumi_datum_missing` |
-| — | That output carries **no** reference script | `..._masumi_reference_script` |
-| — | Datum parses as a lock datum | `..._masumi_datum_invalid` |
-| M3 | Structural invariants (below) | `..._masumi_datum_invalid` |
-| M8 | Deadline (below) | `..._masumi_deadline` |
-| M9 | Collateral bounds (below) | `..._masumi_collateral` |
-| — | Exact asset set (below) | `..._masumi_asset` |
-| M9 | Post-result min-UTxO | `..._masumi_min_utxo` |
-| M7 | Declared `extra` fields match the datum | `..._masumi_datum_mismatch` |
-
-**M3 structural invariants** — all must hold, else the datum is not a fresh lock:
-state is `FundsLocked`; `resultHash` empty; both cooldown times zero; neither
-buyer nor seller credential is a script; `referenceSignature` at least 16 bytes
-(32 hex characters — the field is hex-encoded, so the check is on string length);
-and `payByTime <= submitResultTime <= unlockTime <= externalDisputeUnlockTime`.
-
-**M8 deadline** — the tx **must** carry a TTL (no TTL → `..._masumi_deadline`),
-converted to POSIX ms via the network clock, and must satisfy
-`ttlPosixMs <= payByTime`. A lock that could land after its own pay-by deadline
-is not a valid lock, so the TTL is mandatory here even though it's optional in
-Stage C.
-
-**M9 collateral** — `collateral >= 0`; if non-zero it must be at least
-`1_435_230` lovelace; and it must not exceed the output's coin.
-
-**Asset set** — for lovelace, `output.coin >= amount + collateral` and no native
-assets; for a token, the held amount must equal `amount` exactly and be the only
-asset. `!=`, not `>=`: escrow locks an exact figure.
-
-**M7 field matching** — three different behaviours, worth separating:
-
-*Always checked:* buyer credentials against the payer address, and
-`sellerAddress` (which must be present — an absent one is a mismatch).
-
-*Checked only when declared* — omit and nothing is asserted: `referenceKey`,
-`referenceSignature`, `sellerNonce`, `identifierFromPurchaser`, `agentIdentifier`,
-`inputHash`, `payByTime`, `submitResultTime`, `unlockTime`,
-`externalDisputeUnlockTime`, `collateralReturnLovelace`.
-
-*Checked even when undeclared:* `sellerReturnAddress`. It is **not** optional in
-the same sense. `returnAddressMatches` treats an omitted declaration as asserting
-the datum carries **no** seller return address:
-
-```java
-if (declared == null) return actual == null;   // omitted ⇒ datum must be None
-```
-
-So omitting `sellerReturnAddress` while the datum sets one fails with
-`..._masumi_datum_mismatch`. Omission is an assertion of absence, not a skip.
-
-*Never checked:* `buyerReturnAddress`. It is buyer-supplied — the 402 answers an
-unauthenticated request, so the resource server does not know the payer and
-cannot declare its refund address. The buyer is pinned by the `buyer == payer`
-assertion instead, so a declared `buyerReturnAddress` is ignored rather than
-matched.
-
-For the genuinely optional fields, an undeclared field is not an assertion, so
-there is nothing to disagree with. Callers that want one enforced must declare
-it.
-
-**M1 derives, it does not trust.** The facilitator applies the deployment
-parameters (`requiredAdmins`, `adminVkeys`, `cooldownPeriod`) to the canonical
-`vested_pay` blueprint, computes the script address itself, and requires `payTo`
-to equal it. A resource server naming a look-alike escrow — different admins, so
-a different trust domain — fails here, with or without an allowlist. Preview has
-no canonical deployment, so a 402 for that network must declare one explicitly.
-
-> **M1b narrows further, and is off unless you configure it.** The allowlist
-> pins which escrow *deployments* this facilitator will serve, on top of the
-> derivation M1 already enforces. Set
-> `x402.masumi.allowed-script-hashes.<network>` in production if you want to
-> serve only your own deployment. It appears on the
-> [mainnet checklist](../deploy/README.md#mainnet-readiness-checklist).
-
-## `script` — arbitrary Plutus lock
-
-| # | Check | Code |
-|---|---|---|
-| S1 | `extra.scriptHash` or `extra.script` present, and the reconstructed script address ≡ `payTo` | `..._script_address_mismatch` |
-| S2 | Asset/amount/min-UTxO | *(shared Stage E)* |
-| S3 | Datum present per the Plutus version's policy | `..._script_datum_missing` |
-
-**S1** reconstructs the address rather than trusting `payTo`. When `parameters`
-are supplied, the script is applied via aiken's UPLC `apply_params` and hashed —
-verified byte-for-byte against known-good vectors for both empty and
-parametrized cases (see `ScriptAddressConformanceTest`). Parameter types:
-`bytes`, `string`, `bigint`, `integer`, `boolean`.
-
-**S3** is controlled by `x402.verification.script-datum-policy`:
+`x402.verification.script-datum-policy` selects:
 
 | Policy | Behavior |
 |---|---|
-| `reference` (default) | No datum-kind checks — mirrors the TS reference facilitator. The one exception: a `plutusV1` script whose locked output carries an INLINE datum is rejected, since the ledger cannot represent an inline datum in a Plutus V1 script context — the output is guaranteed unspendable by that script. The scheme spec permits (but does not mandate) rejecting datum-less outputs; this facilitator's default takes the permissive reference-parity option except for this one guaranteed-stranding case. |
-| `strict` | Plutus-version- and datum-kind-aware: `plutusV1` requires a datum **hash** (inline is not valid for V1); `plutusV2` requires inline **or** hash; `plutusV3` requires inline **or** hash; absent/unknown (hash-only) requires inline or hash. |
-| `v3-optional` | Same as `strict`, except `plutusV3` also allows a datum-less output. |
+| `reference` (default) | Upstream permissive datum presence, except V1 with inline datum is rejected |
+| `strict` | V1 requires datum hash; V2/V3/hash-only require inline datum or hash |
+| `v3-optional` | As strict, but V3 may omit datum |
 
-`strict` and `v3-optional` remain available as opt-in, stricter policies for
-deployments that want to reject datum-less locks up front rather than rely on
-the reference behavior.
-
----
-
-## Error code notes
-
-Two codes exist beyond the core set — `..._payer_not_witness` and
-`..._script_datum_missing` — covering the payer-authorization and
-datum-presence checks described above.
-
-One deliberate, documented edge case: an explicit JSON `null` on a field that
-is otherwise optional is rejected rather than treated the same as an omitted
-field. An omitted field is silently skipped; an explicit `null` is not an
-equivalent input and fails with an invalid-payload error instead.
-
-Coverage lives in `ExactCardanoVerifyTest` (32), `MasumiTransferVerifierTest`
-(28), `ScriptTransferVerifierTest` (14), `ScriptAddressConformanceTest` (9), and
-`CardanoTransactionDecoderTest` (6).
+These policies concern new outputs locked by scripts. Spending script inputs
+still requires complete ledger validation through the phase-1 hook above.

@@ -23,6 +23,12 @@ public interface TransferMethodVerifier {
     Optional<String> check(Map<String, Object> extra, PaymentRequirements requirements,
                            DecodedTransaction tx, String payer, BigInteger coinsPerUtxoByte);
 
+    default Optional<String> check(Map<String, Object> extra, PaymentRequirements requirements,
+                                   DecodedTransaction tx, String payer, BigInteger coinsPerUtxoByte,
+                                   Map<String, Object> resource) {
+        return check(extra, requirements, tx, payer, coinsPerUtxoByte);
+    }
+
     /** Canonical (lowercase) asset key of the requirement; {@code ""} for lovelace's absent asset. */
     static String assetKey(PaymentRequirements requirements) {
         return requirements.asset() == null ? "" : requirements.asset().toLowerCase();

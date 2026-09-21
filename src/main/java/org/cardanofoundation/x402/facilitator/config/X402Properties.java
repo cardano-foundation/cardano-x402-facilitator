@@ -50,7 +50,7 @@ public record X402Properties(List<NetworkEntry> networks,
                          Boolean acceptMempool, Boolean idempotentReplay, Duration stabilityWindow,
                          Duration reconcileHorizon) {
         public Duration confirmationTimeoutOrDefault() {
-            return confirmationTimeout == null ? Duration.ofSeconds(180) : confirmationTimeout;
+            return confirmationTimeout == null ? Duration.ofSeconds(75) : confirmationTimeout;
         }
 
         public int confirmationDepthOrDefault() {
@@ -58,7 +58,7 @@ public record X402Properties(List<NetworkEntry> networks,
         }
 
         public Duration pollIntervalOrDefault() {
-            return pollInterval == null ? Duration.ofSeconds(3) : pollInterval;
+            return pollInterval == null ? Duration.ofSeconds(5) : pollInterval;
         }
 
         public boolean acceptMempoolOrDefault() {

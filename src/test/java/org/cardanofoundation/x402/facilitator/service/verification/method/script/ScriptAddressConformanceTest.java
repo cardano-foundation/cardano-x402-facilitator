@@ -105,4 +105,29 @@ class ScriptAddressConformanceTest {
                 BigIntPlutusData.of(10), // key "b"
                 BigIntPlutusData.of(30)); // key "a"
     }
+
+    @Test void rejectsNonCanonicalAndMistypedParameters() {
+        for (Map<String,Object> p : List.of(param("bytes","AA"), param("bytes","f"),
+                param("integer","01"), param("integer","+1"), param("integer",1.5),
+                param("integer",9007199254740992L), param("boolean","false"), param("string",42))) {
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> ScriptAddress.orderedParamValues(Map.of("x",p)))
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
+    }
+    @Test void boundsParameterCountAndAggregateBytes() {
+        Map<String,Object> params = new LinkedHashMap<>();
+        for (int i=0;i<65;i++) params.put("p"+i,param("boolean",true));
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> ScriptAddress.orderedParamValues(params))
+                .isInstanceOf(IllegalArgumentException.class);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> ScriptAddress.orderedParamValues(
+                Map.of("x",param("string","a".repeat(65536)))))
+                .isInstanceOf(IllegalArgumentException.class);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> ScriptAddress.orderedParamValues(
+                Map.of("x",param("integer","1".repeat(129)))))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+    @Test void hashOnlyDescriptorRequiresLowercase() {
+        assertThat(ScriptAddress.scriptAddressMatches(Map.of("scriptHash",TestTx.SCRIPT_HASH_V3.toUpperCase()),
+                TestTx.SCRIPT_ADDR_V3)).isFalse();
+    }
 }

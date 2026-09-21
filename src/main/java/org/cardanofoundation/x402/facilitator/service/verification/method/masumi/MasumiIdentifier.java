@@ -29,7 +29,7 @@ public final class MasumiIdentifier {
     /** Defensive budget on the compressed input. */
     private static final int MAX_COMPRESSED_BYTES = 8 * 1024;
     /** Defensive budget on the expanded text. */
-    private static final int MAX_TEXT_CHARS = 64 * 1024;
+    private static final int MAX_TEXT_CHARS = 32 * 1024;
 
     private static final Pattern LOWER_HEX = Pattern.compile("^[0-9a-f]+$");
 

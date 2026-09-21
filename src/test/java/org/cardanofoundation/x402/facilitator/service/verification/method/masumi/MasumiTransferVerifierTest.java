@@ -69,7 +69,6 @@ class MasumiTransferVerifierTest {
         t.put("submitResultTime", TestTx.MASUMI_SUBMIT_RESULT_TIME.toString());
         t.put("unlockTime", TestTx.MASUMI_UNLOCK_TIME.toString());
         t.put("externalDisputeUnlockTime", TestTx.MASUMI_EXTERNAL_DISPUTE_UNLOCK_TIME.toString());
-        t.put("settlementPolicy", "l1");
         return t;
     }
 
@@ -79,28 +78,42 @@ class MasumiTransferVerifierTest {
      * can only pass on terms this seller genuinely consented to.
      */
     static Map<String, Object> defaultExtra() {
+        return signedExtra(defaultTerms(), "lovelace", TestTx.MASUMI_AMOUNT.toString(), ESCROW);
+    }
+
+    static Map<String, Object> signedExtra(Map<String, Object> terms, String asset, String amount, String payTo) {
+        Map<String, Object> part = new LinkedHashMap<>();
+        part.put("name", "request");
+        part.put("canonicalization", "jcs");
+        part.put("content", null);
+        part.put("digest", "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b");
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("assetTransferMethod", "masumi");
-        m.put("terms", defaultTerms());
-        String digest = MasumiDigests.computeTermsDigest(
-                MasumiDigests.buildSignedTerms(m, requirements(m)));
-        m.put("referenceKey", SELLER.referenceKeyHex());
-        m.put("referenceSignature", SELLER.signTermsHex(digest));
+        m.put("inputCommitment", new LinkedHashMap<>(Map.of("version", "1", "algorithm", "sha256",
+                "parts", List.of(part), "digest", TestTx.MASUMI_INPUT_HASH)));
+        m.put("terms", terms);
+        resign(m, asset, amount, payTo);
         return m;
+    }
+
+    static void resign(Map<String, Object> extra, String asset, String amount, String payTo) {
+        String digest = MasumiDigests.computeTermsDigest(MasumiDigests.buildSignedTerms(extra,
+                new PaymentRequirements("exact", "cardano:preprod", asset, amount, payTo, 600, extra)));
+        extra.put("referenceKey", SELLER.referenceKeyHex());
+        extra.put("referenceSignature", SELLER.signTermsHex(digest));
+        Map<String, Object> terms = MasumiSchemaTest.object(extra, "terms");
+        extra.put("blockchainIdentifier", MasumiTestSeller.encodeIdentifier(MasumiIdentifier.buildIdentifierText(
+                new MasumiIdentifier.IdentifierParts((String) terms.get("sellerNonce"),
+                        terms.get("agentIdentifier") instanceof String a ? a : "",
+                        (String) terms.get("buyerNonce"), (String) extra.get("referenceSignature"),
+                        (String) extra.get("referenceKey"), payTo))));
     }
 
     /** Builds an extra whose terms carry an extra field, signed over those terms. */
     static Map<String, Object> extraWithTerm(String key, Object value) {
         Map<String, Object> terms = defaultTerms();
         terms.put(key, value);
-        Map<String, Object> m = new LinkedHashMap<>();
-        m.put("assetTransferMethod", "masumi");
-        m.put("terms", terms);
-        String digest = MasumiDigests.computeTermsDigest(
-                MasumiDigests.buildSignedTerms(m, requirements(m)));
-        m.put("referenceKey", SELLER.referenceKeyHex());
-        m.put("referenceSignature", SELLER.signTermsHex(digest));
-        return m;
+        return signedExtra(terms, "lovelace", TestTx.MASUMI_AMOUNT.toString(), ESCROW);
     }
 
     /**

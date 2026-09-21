@@ -8,6 +8,7 @@ public final class ErrorCodes {
 
     public static final String UNSUPPORTED_SCHEME = "unsupported_scheme";
     public static final String INVALID_PAYLOAD = "invalid_exact_cardano_payload";
+    public static final String REQUIREMENTS_INVALID = "invalid_exact_cardano_requirements";
     public static final String UNSUPPORTED_VERSION = INVALID_PAYLOAD + "_unsupported_version";
     public static final String NETWORK_MISMATCH = "network_mismatch";
     public static final String DECODE_FAILED = INVALID_PAYLOAD + "_transaction_decode_failed";
@@ -30,6 +31,17 @@ public final class ErrorCodes {
     public static final String SETTLEMENT_FAILED = "exact_cardano_settlement_failed";
     public static final String SETTLEMENT_NOT_CONFIRMED = "exact_cardano_settlement_not_confirmed";
     public static final String DUPLICATE_SETTLEMENT = "duplicate_settlement";
+
+    public static final String PHASE1_INVALID = INVALID_PAYLOAD + "_phase1_invalid";
+    public static final String PHASE2_INVALID = INVALID_PAYLOAD + "_phase2_invalid";
+    public static final String VALUE_NOT_CONSERVED = INVALID_PAYLOAD + "_value_not_conserved";
+    public static final String FEE_BELOW_MINIMUM = INVALID_PAYLOAD + "_fee_below_minimum";
+    public static final String INPUT_VALUE_UNAVAILABLE = "exact_cardano_facilitator_input_value_unavailable";
+    public static final String SETTLEMENT_PENDING = "settlement_pending";
+    public static final String SETTLEMENT_DEFINITIVELY_REJECTED = "exact_cardano_settlement_definitively_rejected";
+    public static final String MASUMI_ESCROW_OUTPUT_COUNT = INVALID_PAYLOAD + "_masumi_escrow_output_count";
+    public static final String MASUMI_AGENT_IDENTIFIER = "invalid_exact_cardano_requirements_masumi_agent_identifier";
+    public static final String MASUMI_DEPLOYMENT = "invalid_exact_cardano_requirements_masumi_deployment";
 
     // masumi assetTransferMethod
     public static final String MASUMI_CONTRACT_MISMATCH = INVALID_PAYLOAD + "_masumi_contract_mismatch";
@@ -58,7 +70,7 @@ public final class ErrorCodes {
     public static final String MASUMI_IDENTIFIER = "invalid_exact_cardano_requirements_masumi_identifier";
     public static final String MASUMI_COMMITMENT = "invalid_exact_cardano_requirements_masumi_commitment";
     /** The seller's CIP-8 authorization over termsDigest does not verify. */
-    public static final String MASUMI_AUTHORIZATION = "invalid_exact_cardano_requirements_masumi_schema";
+    public static final String MASUMI_AUTHORIZATION = "invalid_exact_cardano_requirements_masumi_seller_signature";
 
     // script assetTransferMethod
     public static final String SCRIPT_ADDRESS_MISMATCH = INVALID_PAYLOAD + "_script_address_mismatch";

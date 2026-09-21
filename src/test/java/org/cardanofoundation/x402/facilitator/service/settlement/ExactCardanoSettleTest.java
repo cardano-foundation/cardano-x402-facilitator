@@ -120,12 +120,11 @@ class ExactCardanoSettleTest {
     }
 
     @Test
-    void duplicateSettleOfConfirmedTxIsRejectedByDefault() {
+    void confirmedRetrySucceedsWithoutRebroadcastEvenWhenReplaySwitchIsFalse() {
         String tx = TestTx.buildBase64(TestTx.Spec.defaults());
         assertThat(service.settle(payload(tx), requirements()).success()).isTrue();
         SettleResponse dup = service.settle(payload(tx), requirements());
-        assertThat(dup.success()).isFalse();
-        assertThat(dup.errorReason()).isEqualTo(ErrorCodes.DUPLICATE_SETTLEMENT);
+        assertThat(dup.success()).isTrue();
         assertThat(chain.submitCount).isEqualTo(1);
     }
 
@@ -143,28 +142,29 @@ class ExactCardanoSettleTest {
                 start.await();
                 SettleResponse r = service.settle(payload(tx), requirements());
                 if (r.success()) successes.incrementAndGet();
-                else if (ErrorCodes.DUPLICATE_SETTLEMENT.equals(r.errorReason())) duplicates.incrementAndGet();
+                else if ("settlement_pending".equals(r.errorReason())) duplicates.incrementAndGet();
                 return null;
             }));
         }
         start.countDown();
         for (Future<?> f : futures) f.get();
         pool.shutdown();
-        assertThat(successes.get()).isEqualTo(1);
-        assertThat(duplicates.get()).isEqualTo(threads - 1);
+        assertThat(successes.get()).isPositive();
+        assertThat(successes.get() + duplicates.get()).isEqualTo(threads);
         assertThat(chain.submitCount).isEqualTo(1);
     }
 
     @Test
-    void nodeRejectionReleasesClaimAndRetryCanSucceed() {
+    void definitiveRejectionKeepsTombstoneAndNeverBroadcastsAgain() {
         String tx = TestTx.buildBase64(TestTx.Spec.defaults());
         chain.submissionResult = new SubmissionResult.Rejected("BadInputsUTxO");
         SettleResponse fail = service.settle(payload(tx), requirements());
-        assertThat(fail.errorReason()).isEqualTo(ErrorCodes.SETTLEMENT_FAILED);
+        assertThat(fail.errorReason()).isEqualTo("exact_cardano_settlement_definitively_rejected");
         chain.submissionResult = null; // node accepts now
         SettleResponse retry = service.settle(payload(tx), requirements());
-        assertThat(retry.success()).isTrue();
-        assertThat(chain.submitCount).isEqualTo(2);
+        assertThat(retry.success()).isFalse();
+        assertThat(retry.errorReason()).isEqualTo("exact_cardano_settlement_definitively_rejected");
+        assertThat(chain.submitCount).isEqualTo(1);
     }
 
     @Test
@@ -175,7 +175,10 @@ class ExactCardanoSettleTest {
         assertThat(fail.errorReason()).isEqualTo(ErrorCodes.SETTLEMENT_FAILED);
         String txHash = com.bloxbean.cardano.client.transaction.util.TransactionUtil
                 .getTxHash(Base64.getDecoder().decode(tx)).toLowerCase();
-        assertThat(repo.find(txHash).orElseThrow().status()).isEqualTo(SettlementRecord.Status.FAILED);
+        assertThat(repo.find(txHash)).isEmpty();
+        chain.submissionResult = null;
+        assertThat(service.settle(payload(tx), requirements()).success()).isTrue();
+        assertThat(chain.submitCount).isEqualTo(2);
     }
 
     @Test
@@ -183,31 +186,34 @@ class ExactCardanoSettleTest {
         String tx = TestTx.buildBase64(TestTx.Spec.defaults());
         chain.submissionResult = new SubmissionResult.Unknown("socket timeout");
         SettleResponse first = service.settle(payload(tx), requirements());
-        assertThat(first.errorReason()).isEqualTo(ErrorCodes.SETTLEMENT_NOT_CONFIRMED);
+        assertThat(first.errorReason()).isEqualTo("settlement_pending");
         assertThat(first.transaction()).isNotEmpty();
         String txHash = first.transaction();
         assertThat(repo.find(txHash).orElseThrow().status()).isEqualTo(SettlementRecord.Status.SUBMITTING);
-        // retry: journal SUBMITTING branch does a one-shot check, promotes at depth,
-        // then reports duplicate (replay off) — but the row converges to CONFIRMED
+        // Retry observes sufficient canonical evidence and succeeds without a second broadcast.
         chain.submissionResult = null;
         SettleResponse retry = service.settle(payload(tx), requirements());
-        assertThat(retry.errorReason()).isEqualTo(ErrorCodes.DUPLICATE_SETTLEMENT);
+        assertThat(retry.success()).isTrue();
         assertThat(repo.find(txHash).orElseThrow().status()).isEqualTo(SettlementRecord.Status.CONFIRMED);
         assertThat(chain.submitCount).isEqualTo(1); // never rebroadcast
     }
 
     @Test
-    void confirmationTimeoutKeepsRowAndReportsNotConfirmedWithoutStatusClaim() {
+    void confirmationTimeoutReturnsProtocolPendingAndRetriesConverge() {
         String tx = TestTx.buildBase64(TestTx.Spec.defaults());
         chain.includedDepth = FakeChainService.NOT_SEEN; // never included
         SettleResponse r = service.settle(payload(tx), requirements());
         assertThat(r.success()).isFalse();
-        assertThat(r.errorReason()).isEqualTo(ErrorCodes.SETTLEMENT_NOT_CONFIRMED);
-        assertThat(r.extra()).isNull(); // timeout is not mempool evidence
+        assertThat(r.errorReason()).isEqualTo("settlement_pending");
+        assertThat(r.extra()).containsEntry("status", "pending").containsEntry("transactionId", r.transaction());
+        assertThat(r.payer()).isEqualTo(TestTx.PAYER_ADDRESS);
         assertThat(repo.find(r.transaction()).orElseThrow().status())
                 .isEqualTo(SettlementRecord.Status.NOT_CONFIRMED);
         SettleResponse dup = service.settle(payload(tx), requirements());
-        assertThat(dup.errorReason()).isEqualTo(ErrorCodes.DUPLICATE_SETTLEMENT);
+        assertThat(dup.errorReason()).isEqualTo("settlement_pending");
+        chain.includedDepth = 2;
+        chain.unspent.clear();
+        assertThat(service.settle(payload(tx), requirements()).success()).isTrue();
         assertThat(chain.submitCount).isEqualTo(1);
     }
 
@@ -219,13 +225,14 @@ class ExactCardanoSettleTest {
         // simulate an attempt that died in the claim->submit window, older than the ttl
         repo.insertClaim(new SettlementRecord(txHash, UUID.randomUUID(), "digest", "cardano:preprod",
                 SettlementRecord.Status.CLAIMED, null, null, null, null, null, null, null,
-                Instant.now().minus(Duration.ofMinutes(5)), null, null, null, null, null, null));
+                Instant.now().minus(Duration.ofMinutes(5)), null, null, null, null, null, null,
+                1, SettlementRecord.SubmissionProvenance.LOCAL, false, null));
         SettleResponse r = service.settle(payload(tx), requirements());
         assertThat(r.success()).isTrue();
     }
 
     @Test
-    void confirmedTxWithDifferentResourceFallsThroughToVerification() {
+    void differentResourceCannotReuseConfirmedPayment() {
         String tx = TestTx.buildBase64(TestTx.Spec.defaults());
         assertThat(service.settle(payload(tx, Map.of("url", "https://example.test/a")),
                 requirements()).success()).isTrue();
@@ -233,11 +240,11 @@ class ExactCardanoSettleTest {
         SettleResponse other = service.settle(payload(tx, Map.of("url", "https://example.test/B")),
                 requirements());
         assertThat(other.success()).isFalse();
-        assertThat(other.errorReason()).isEqualTo(ErrorCodes.NONCE_NOT_ON_CHAIN); // not duplicate
+        assertThat(other.errorReason()).isEqualTo(ErrorCodes.DUPLICATE_SETTLEMENT);
     }
 
     @Test
-    void idempotentReplayReturnsRecordedSuccessAfterStabilityCheck() {
+    void replaySwitchStillAllowsFreshEvidenceRetry() {
         SettlementService replaying = service(true);
         String tx = TestTx.buildBase64(TestTx.Spec.defaults());
         assertThat(replaying.settle(payload(tx), requirements()).success()).isTrue();
@@ -256,7 +263,7 @@ class ExactCardanoSettleTest {
         chain.includedDepth = FakeChainService.NOT_SEEN; // rolled back
         SettleResponse replayed = replaying.settle(payload(tx), requirements());
         assertThat(replayed.success()).isFalse();
-        assertThat(replayed.errorReason()).isEqualTo(ErrorCodes.SETTLEMENT_NOT_CONFIRMED);
+        assertThat(replayed.errorReason()).isEqualTo("settlement_pending");
         assertThat(repo.find(first.transaction()).orElseThrow().status())
                 .isEqualTo(SettlementRecord.Status.SUBMITTED);
     }
@@ -266,10 +273,10 @@ class ExactCardanoSettleTest {
         String tx = TestTx.buildBase64(TestTx.Spec.defaults());
         chain.includedDepth = FakeChainService.NOT_SEEN;
         SettleResponse first = service.settle(payload(tx), requirements()); // -> NOT_CONFIRMED
-        assertThat(first.errorReason()).isEqualTo(ErrorCodes.SETTLEMENT_NOT_CONFIRMED);
+        assertThat(first.errorReason()).isEqualTo("settlement_pending");
         chain.throwOnInclusionCheck = true;
         SettleResponse dup = service.settle(payload(tx), requirements());
-        assertThat(dup.errorReason()).isEqualTo(ErrorCodes.CHAIN_LOOKUP_FAILED);
+        assertThat(dup.errorReason()).isEqualTo("settlement_pending");
         assertThat(repo.find(first.transaction()).orElseThrow().status())
                 .isEqualTo(SettlementRecord.Status.NOT_CONFIRMED); // untouched
     }
@@ -280,7 +287,8 @@ class ExactCardanoSettleTest {
         UUID owner = UUID.randomUUID();
         repo.insertClaim(new SettlementRecord(txHash, owner, "d", "cardano:preprod",
                 SettlementRecord.Status.CLAIMED, null, null, null, null, null, null, null,
-                Instant.now(), null, null, null, null, null, null));
+                Instant.now(), null, null, null, null, null, null,
+                1, SettlementRecord.SubmissionProvenance.LOCAL, false, null));
         assertThat(repo.casTransition(txHash, UUID.randomUUID(),
                 SettlementRecord.Status.CLAIMED, SettlementRecord.Status.SUBMITTING, Map.of())).isFalse();
         assertThat(repo.casTransition(txHash, owner,
@@ -293,9 +301,10 @@ class ExactCardanoSettleTest {
         String txHash = com.bloxbean.cardano.client.transaction.util.TransactionUtil
                 .getTxHash(Base64.getDecoder().decode(tx)).toLowerCase();
         UUID attempt = UUID.randomUUID();
-        repo.insertClaim(new SettlementRecord(txHash, attempt, "d", "cardano:preprod",
+        repo.insertClaim(new SettlementRecord(txHash, attempt, SettlementDigest.compute(requirements(), payload(tx).resource()), "cardano:preprod",
                 SettlementRecord.Status.CLAIMED, TestTx.PAYER_ADDRESS, null, null, null, null,
-                TestTx.NONCE, null, Instant.now(), null, null, null, null, null, null));
+                TestTx.NONCE, null, Instant.now(), null, null, null, null, null, null,
+                1, SettlementRecord.SubmissionProvenance.LOCAL, false, null));
         repo.casTransition(txHash, attempt, SettlementRecord.Status.CLAIMED,
                 SettlementRecord.Status.SUBMITTING, Map.of());
         repo.casTransition(txHash, attempt, SettlementRecord.Status.SUBMITTING,
@@ -304,7 +313,7 @@ class ExactCardanoSettleTest {
                 SettlementRecord.Status.EXPIRED, Map.of());
         chain.includedDepth = 3; // it landed after all
         SettleResponse r = service.settle(payload(tx), requirements());
-        assertThat(r.errorReason()).isEqualTo(ErrorCodes.DUPLICATE_SETTLEMENT); // promoted, replay off
+        assertThat(r.success()).isTrue();
         assertThat(repo.find(txHash).orElseThrow().status()).isEqualTo(SettlementRecord.Status.CONFIRMED);
     }
 
@@ -322,7 +331,7 @@ class ExactCardanoSettleTest {
         // a SUBMITTED row whose tx ttl passed, never included -> expire
         String h2 = "bb".repeat(32);
         seedRow(h2, SettlementRecord.Status.SUBMITTED, 100L, Instant.now());
-        // a TTL-less row older than the horizon, never included -> expire
+        // a TTL-less row remains uncertain regardless of age
         String h3 = "cc".repeat(32);
         seedRow(h3, SettlementRecord.Status.SUBMITTING, null,
                 Instant.now().minus(Duration.ofHours(30)));
@@ -335,7 +344,7 @@ class ExactCardanoSettleTest {
         reconciler.sweep();
         assertThat(repo.find(h1).orElseThrow().status()).isEqualTo(SettlementRecord.Status.CONFIRMED);
         assertThat(repo.find(h2).orElseThrow().status()).isEqualTo(SettlementRecord.Status.EXPIRED);
-        assertThat(repo.find(h3).orElseThrow().status()).isEqualTo(SettlementRecord.Status.EXPIRED);
+        assertThat(repo.find(h3).orElseThrow().status()).isEqualTo(SettlementRecord.Status.SUBMITTING);
 
         // rollback: recent CONFIRMED not on chain anymore -> demote
         chain.inclusionDepthByHash.put(h1, FakeChainService.NOT_SEEN);
@@ -343,11 +352,166 @@ class ExactCardanoSettleTest {
         assertThat(repo.find(h1).orElseThrow().status()).isEqualTo(SettlementRecord.Status.SUBMITTED);
     }
 
+    @Test
+    void retryRevalidatesRecipientAndAmountAfterInputsAreSpent() {
+        String tx = TestTx.buildBase64(TestTx.Spec.defaults());
+        assertThat(service.settle(payload(tx), requirements()).success()).isTrue();
+        chain.unspent.clear();
+        PaymentRequirements wrong = new PaymentRequirements("exact", "cardano:preprod", "lovelace",
+                "999999999", TestTx.PAY_TO, 600, requirements().extra());
+        PaymentPayload attempt = new PaymentPayload(2, payload(tx).resource(), wrong, payload(tx).payload(), null);
+        assertThat(service.settle(attempt, wrong).success()).isFalse();
+        assertThat(chain.submitCount).isEqualTo(1);
+    }
+
+    @Test
+    void stricterRetryWaitsForRequestedDepthAndReportsActualDepth() {
+        String tx = TestTx.buildBase64(TestTx.Spec.defaults());
+        assertThat(service.settle(payload(tx), requirements()).success()).isTrue();
+        chain.unspent.clear();
+        PaymentRequirements deeper = policy(3);
+        PaymentPayload attempt = new PaymentPayload(2, payload(tx).resource(), deeper, payload(tx).payload(), null);
+        assertThat(service.settle(attempt, deeper).errorReason()).isEqualTo("settlement_pending");
+        chain.includedDepth = 4;
+        SettleResponse success = service.settle(attempt, deeper);
+        assertThat(success.success()).isTrue();
+        assertThat(success.extra()).containsEntry("confirmations", 4);
+        assertThat(chain.submitCount).isEqualTo(1);
+    }
+
+    @Test
+    void ownAcceptanceImmediatelySettlesOptedInMinusOnePolicy() {
+        String tx = TestTx.buildBase64(TestTx.Spec.defaults());
+        PaymentRequirements req = policy(-1);
+        chain.includedDepth = FakeChainService.NOT_SEEN;
+        SettlementService optedIn = new SettlementService(repo, scheme, chain, new CardanoTransactionDecoder(),
+                new SettlementService.Config(Duration.ofSeconds(2), 1, true, false,
+                        Duration.ofMinutes(10), Duration.ofSeconds(2)), Clock.systemUTC());
+        SettleResponse result = optedIn.settle(new PaymentPayload(2, payload(tx).resource(), req,
+                payload(tx).payload(), null), req);
+        assertThat(result.success()).isTrue();
+        assertThat(result.extra()).containsEntry("status", "mempool");
+        assertThat(chain.submitCount).isEqualTo(1);
+    }
+
+    @Test
+    void mismatchedSubmissionHashIsUncertainAndCannotGrantMempoolSuccess() {
+        String tx = TestTx.buildBase64(TestTx.Spec.defaults());
+        PaymentRequirements req = policy(-1);
+        chain.includedDepth = FakeChainService.NOT_SEEN;
+        chain.submissionResult = new SubmissionResult.Accepted("ff".repeat(32));
+        SettlementService optedIn = new SettlementService(repo, scheme, chain, new CardanoTransactionDecoder(),
+                new SettlementService.Config(Duration.ofSeconds(2), 1, true, false,
+                        Duration.ofMinutes(10), Duration.ofSeconds(2)), Clock.systemUTC());
+        PaymentPayload attempt = new PaymentPayload(2, payload(tx).resource(), req, payload(tx).payload(), null);
+        SettleResponse result = optedIn.settle(attempt, req);
+        assertThat(result.success()).isFalse();
+        assertThat(result.errorReason()).isEqualTo("settlement_pending");
+        assertThat(result.transaction()).isNotEqualTo("ff".repeat(32));
+        assertThat(optedIn.settle(attempt, req).success()).isFalse();
+        assertThat(chain.submitCount).isEqualTo(1);
+    }
+
+    @Test
+    void includedBelowSelectedDepthNeverExpiresEvenAfterTtl() {
+        String tx = TestTx.buildBase64(TestTx.Spec.defaults());
+        PaymentRequirements req = policy(5);
+        SettleResponse first = service.settle(new PaymentPayload(2, payload(tx).resource(), req,
+                payload(tx).payload(), null), req);
+        assertThat(first.success()).isFalse();
+        assertThat(first.extra()).containsEntry("confirmations", 1);
+        chain.currentSlot = 2_000_000;
+        new SettlementReconciler(repo, Map.of("cardano:preprod", chain), null, 1,
+                Duration.ofMinutes(10), Duration.ofHours(24), Clock.systemUTC(), false).sweep();
+        assertThat(repo.find(first.transaction()).orElseThrow().status())
+                .isEqualTo(SettlementRecord.Status.NOT_CONFIRMED);
+    }
+
+    @Test
+    void reconcilerDoesNotExtendConfirmationStabilityWindowOnEverySweep() {
+        String tx = TestTx.buildBase64(TestTx.Spec.defaults());
+        SettleResponse first = service.settle(payload(tx), requirements());
+        Instant initiallyConfirmed = repo.find(first.transaction()).orElseThrow().confirmedAt();
+        Clock later = Clock.fixed(initiallyConfirmed.plusSeconds(60), java.time.ZoneOffset.UTC);
+        new SettlementReconciler(repo, Map.of("cardano:preprod", chain), null, 1,
+                Duration.ofMinutes(10), Duration.ofHours(24), later, false).sweep();
+        assertThat(repo.find(first.transaction()).orElseThrow().confirmedAt()).isEqualTo(initiallyConfirmed);
+    }
+
+    @Test
+    void resumedUnobservedPaymentExpiresOnlyAfterTtlAndIndexingGraceWithoutRebroadcast() {
+        String tx = TestTx.buildBase64(TestTx.Spec.defaults());
+        chain.includedDepth = FakeChainService.NOT_SEEN;
+        SettleResponse first = service.settle(payload(tx), requirements());
+        chain.currentSlot = 1_000_120;
+        assertThat(service.settle(payload(tx), requirements()).errorReason()).isEqualTo("settlement_pending");
+        chain.currentSlot++;
+        SettleResponse expired = service.settle(payload(tx), requirements());
+        assertThat(expired.success()).isFalse();
+        assertThat(expired.errorReason()).isEqualTo("exact_cardano_settlement_failed");
+        assertThat(expired.extra()).containsEntry("status", "expired");
+        assertThat(repo.find(first.transaction()).orElseThrow().status()).isEqualTo(SettlementRecord.Status.EXPIRED);
+        assertThat(chain.submitCount).isEqualTo(1);
+    }
+
+    @Test
+    void inclusionLookupFailurePastTtlNeverBecomesExpiry() {
+        String tx = TestTx.buildBase64(TestTx.Spec.defaults());
+        chain.includedDepth = FakeChainService.NOT_SEEN;
+        SettleResponse first = service.settle(payload(tx), requirements());
+        chain.currentSlot = 2_000_000;
+        chain.throwOnInclusionCheck = true;
+        assertThat(service.settle(payload(tx), requirements()).errorReason()).isEqualTo("settlement_pending");
+        assertThat(repo.find(first.transaction()).orElseThrow().status()).isEqualTo(SettlementRecord.Status.NOT_CONFIRMED);
+        assertThat(chain.submitCount).isEqualTo(1);
+    }
+
+    @Test
+    void stricterRetryDuringSubmissionFencesImmediateMempoolSuccess() throws Exception {
+        CountDownLatch sending = new CountDownLatch(1);
+        CountDownLatch finishSend = new CountDownLatch(1);
+        chain = new FakeChainService() {
+            @Override public SubmissionResult submitTransaction(byte[] bytes) {
+                sending.countDown();
+                try { finishSend.await(); } catch (InterruptedException e) { throw new RuntimeException(e); }
+                return super.submitTransaction(bytes);
+            }
+        };
+        chain.unspent.put(TestTx.NONCE, TestTx.PAYER_ADDRESS);
+        chain.includedDepth = FakeChainService.NOT_SEEN;
+        scheme = new ExactCardanoScheme(chain, chain, new CardanoTransactionDecoder(),
+                List.of(new DefaultTransferVerifier()), 32768, ShelleyNetworkClock.forNetwork("cardano:preprod", null));
+        var optedIn = new SettlementService(repo, scheme, chain, new CardanoTransactionDecoder(),
+                new SettlementService.Config(Duration.ofSeconds(2), 1, true, false,
+                        Duration.ofMinutes(10), Duration.ofSeconds(2)), Clock.systemUTC());
+        String tx = TestTx.buildBase64(TestTx.Spec.defaults());
+        var fast = new PaymentPayload(2, payload(tx).resource(), policy(-1), payload(tx).payload(), null);
+        var strict = new PaymentPayload(2, payload(tx).resource(), policy(3), payload(tx).payload(), null);
+        try (var pool = Executors.newSingleThreadExecutor()) {
+            Future<SettleResponse> first = pool.submit(() -> optedIn.settle(fast, policy(-1)));
+            assertThat(sending.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+            try {
+                assertThat(optedIn.settle(strict, policy(3)).errorReason()).isEqualTo("settlement_pending");
+            } finally {
+                finishSend.countDown();
+            }
+            assertThat(first.get().errorReason()).isEqualTo("settlement_pending");
+        }
+        assertThat(chain.submitCount).isEqualTo(1);
+    }
+
+    private PaymentRequirements policy(int depth) {
+        return new PaymentRequirements("exact", "cardano:preprod", "lovelace", "2000000",
+                TestTx.PAY_TO, 600, Map.of("assetTransferMethod", "default",
+                "confirmationPolicy", Map.of("l1Confirmations", depth)));
+    }
+
     private UUID seedRow(String txHash, SettlementRecord.Status target, Long ttlSlot, Instant claimedAt) {
         UUID attempt = UUID.randomUUID();
         repo.insertClaim(new SettlementRecord(txHash, attempt, "d", "cardano:preprod",
                 SettlementRecord.Status.CLAIMED, TestTx.PAYER_ADDRESS, null, null, null, null,
-                TestTx.NONCE, ttlSlot, claimedAt, null, null, null, null, null, null));
+                TestTx.NONCE, ttlSlot, claimedAt, null, null, null, null, null, null,
+                1, SettlementRecord.SubmissionProvenance.LOCAL, false, null));
         if (target != SettlementRecord.Status.CLAIMED) {
             repo.casTransition(txHash, attempt, SettlementRecord.Status.CLAIMED,
                     SettlementRecord.Status.SUBMITTING, Map.of());

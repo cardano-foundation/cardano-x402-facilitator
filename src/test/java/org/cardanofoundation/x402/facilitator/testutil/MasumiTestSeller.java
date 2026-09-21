@@ -1,6 +1,7 @@
 package org.cardanofoundation.x402.facilitator.testutil;
 
 import co.nstant.in.cbor.model.SimpleValue;
+import com.bloxbean.cardano.client.address.Address;
 import com.bloxbean.cardano.client.address.AddressProvider;
 import com.bloxbean.cardano.client.address.Credential;
 import com.bloxbean.cardano.client.cip.cip8.COSEKey;
@@ -81,8 +82,13 @@ public final class MasumiTestSeller {
      * @return CBOR COSE_Sign1 hex for {@code extra.referenceSignature}.
      */
     public String signTermsHex(String termsDigestHex) {
+        return signTermsHex(termsDigestHex, new HeaderMap().algorithmId(COSE_ALG_EDDSA)
+                .addOtherHeader("address", new Address(sellerAddress).getBytes()));
+    }
+
+    /** Signs exactly these protected headers for cryptographic negative tests. */
+    public String signTermsHex(String termsDigestHex, HeaderMap protectedMap) {
         try {
-            HeaderMap protectedMap = new HeaderMap().algorithmId(COSE_ALG_EDDSA);
             HeaderMap unprotected = new HeaderMap()
                     .addOtherHeader("hashed", SimpleValue.FALSE);
             Headers headers = new Headers()
@@ -99,5 +105,35 @@ public final class MasumiTestSeller {
         } catch (Exception e) {
             throw new IllegalStateException("failed to sign the test terms digest", e);
         }
+    }
+    /** Test-only literal LZString encoder, compatible with compressToUint8Array. */
+    public static String encodeIdentifier(String text) {
+        if (text.isEmpty()) throw new IllegalArgumentException("empty identifier text");
+        class Bits {
+            final StringBuilder bits = new StringBuilder();
+            void put(int value, int count) {
+                for (int i = 0; i < count; i++) bits.append((value >>> i) & 1);
+            }
+        }
+        Bits out = new Bits();
+        char first = text.charAt(0);
+        out.put(first < 256 ? 0 : 1, 2);
+        out.put(first, first < 256 ? 8 : 16);
+        int bits = 3;
+        int enlargeIn = 4;
+        for (int i = 1; i < text.length(); i++) {
+            char c = text.charAt(i);
+            out.put(c < 256 ? 0 : 1, bits);
+            out.put(c, c < 256 ? 8 : 16);
+            if (--enlargeIn == 0) { enlargeIn = 1 << bits; bits++; }
+            if (--enlargeIn == 0) { enlargeIn = 1 << bits; bits++; }
+        }
+        out.put(2, bits);
+        while (out.bits.length() % 16 != 0) out.bits.append('0');
+        byte[] encoded = new byte[out.bits.length() / 8];
+        for (int i = 0; i < encoded.length; i++) {
+            encoded[i] = (byte) Integer.parseInt(out.bits.substring(i * 8, i * 8 + 8), 2);
+        }
+        return HexUtil.encodeHexString(encoded);
     }
 }

@@ -1,0 +1,14 @@
+{
+  "name": "cardano-java-facilitator-interop",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "fixtures": "node fixtures.mjs",
+    "test": "node test.mjs"
+  },
+  "dependencies": {
+    "@x402/cardano": "2.26.0",
+    "@x402/core": "2.26.0",
+    "@evolution-sdk/evolution": "0.5.9"
+  }
+}

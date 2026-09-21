@@ -51,9 +51,26 @@ public class CardanoTransactionDecoder {
         Transaction tx;
         String txHashHex;
         try {
+            if (base64Tx == null || base64Tx.length() > 87384) throw new IllegalArgumentException("transaction exceeds 64 KiB");
             raw = Base64.getDecoder().decode(base64Tx);
+            if (raw.length > 65536 || !Base64.getEncoder().encodeToString(raw).equals(base64Tx))
+                throw new IllegalArgumentException("transaction must be canonical base64 under 64 KiB");
+            CborDecoder strict = new CborDecoder(new java.io.ByteArrayInputStream(raw));
+            strict.setRejectDuplicateKeys(true);
+            strict.setMaxPreallocationSize(65536);
+            List<DataItem> wire = strict.decode();
+            if (wire.size() != 1 || !(wire.getFirst() instanceof Array envelope)
+                    || (envelope.getDataItems().size() != 3 && envelope.getDataItems().size() != 4))
+                throw new IllegalArgumentException("invalid transaction envelope");
+            if (envelope.getDataItems().size() == 4
+                    && !co.nstant.in.cbor.model.SimpleValue.TRUE.equals(envelope.getDataItems().get(2))
+                    && !co.nstant.in.cbor.model.SimpleValue.FALSE.equals(envelope.getDataItems().get(2)))
+                throw new IllegalArgumentException("is_valid must be boolean");
+            validateRawNumbers((co.nstant.in.cbor.model.Map) envelope.getDataItems().getFirst());
             tx = Transaction.deserialize(raw);
             txHashHex = TransactionUtil.getTxHash(raw); // blake2b-256(raw body bytes)
+        } catch (StackOverflowError e) {
+            throw new TransactionDecodeException("Transaction CBOR nesting exceeds decoder budget", e);
         } catch (Exception e) {
             throw new TransactionDecodeException("Transaction CBOR decode failed", e);
         }
@@ -117,7 +134,50 @@ public class CardanoTransactionDecoder {
 
         return new DecodedTransaction(txHashHex, inputs, outputs, ttl, validityStart, networkId,
                 vkeys.size() + bootstrapCount, scriptWitnessCount, signaturesValid,
-                Set.copyOf(verifiedKeyHashes), raw.length);
+                Set.copyOf(verifiedKeyHashes), raw.length, body.getFee(), ledgerIsValid(raw), bodyKeys,
+                requiredSigners(raw), raw);
+    }
+
+    /** CCL truncates several unsigned CBOR integers; reject overflow before typed decoding. */
+    private static void validateRawNumbers(co.nstant.in.cbor.model.Map body) {
+        var inputs = (Array) body.get(new UnsignedInteger(0));
+        for (DataItem item : inputs.getDataItems()) {
+            var input = ((Array) item).getDataItems();
+            if (input.size() != 2 || ((ByteString) input.getFirst()).getBytes().length != 32)
+                throw new IllegalArgumentException("invalid transaction input");
+            ((UnsignedInteger) input.get(1)).getValue().intValueExact();
+        }
+        for (long key : new long[]{3,8}) {
+            var item = body.get(new UnsignedInteger(key));
+            if (item != null) ((UnsignedInteger) item).getValue().longValueExact();
+        }
+        var network = body.get(new UnsignedInteger(15));
+        if (network != null) {
+            int id = ((UnsignedInteger) network).getValue().intValueExact();
+            if (id != 0 && id != 1) throw new IllegalArgumentException("invalid network id");
+        }
+    }
+
+    private static boolean ledgerIsValid(byte[] raw) {
+        try {
+            var parts = ((Array) CborDecoder.decode(raw).getFirst()).getDataItems();
+            return parts.size() == 3 || co.nstant.in.cbor.model.SimpleValue.TRUE.equals(parts.get(2));
+        } catch (Exception e) { throw new TransactionDecodeException("invalid validity flag", e); }
+    }
+
+    private static Set<String> requiredSigners(byte[] raw) {
+        try {
+            var body = (co.nstant.in.cbor.model.Map) CborDecoder.decode(TransactionUtil.extractTransactionBodyFromTx(raw)).getFirst();
+            DataItem item = body.get(new UnsignedInteger(14));
+            if (item == null) return Set.of();
+            Set<String> hashes = new HashSet<>();
+            for (DataItem signer : ((Array) item).getDataItems()) {
+                byte[] hash = ((ByteString) signer).getBytes();
+                if (hash.length != 28) throw new IllegalArgumentException("invalid required signer");
+                hashes.add(HexUtil.encodeHexString(hash));
+            }
+            return hashes;
+        } catch (Exception e) { throw new TransactionDecodeException("invalid required signers", e); }
     }
 
     private static int size(List<?> l) {
@@ -172,7 +232,8 @@ public class CardanoTransactionDecoder {
             DataItem item = CborDecoder.decode(bodyBytes).get(0);
             Set<Long> keys = new HashSet<>();
             for (DataItem k : ((co.nstant.in.cbor.model.Map) item).getKeys()) {
-                if (k instanceof UnsignedInteger u) keys.add(u.getValue().longValue());
+                if (!(k instanceof UnsignedInteger u)) throw new IllegalArgumentException("body key must be an integer");
+                keys.add(u.getValue().longValueExact());
             }
             return keys;
         } catch (Exception e) {

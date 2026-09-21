@@ -83,7 +83,13 @@ override only if you have a reason:
 **An override needs both `zero-slot` and `zero-time-epoch-seconds`.** Supplying
 only one silently falls back to the built-in anchor for that network rather than
 failing — so a partial override looks applied and isn't. `slot-length-ms`
-defaults to `1000` and may be omitted.
+defaults to `1000` and may be omitted; an applied override must use a positive length.
+
+Transaction validity uses the current wall-clock slot from this configuration,
+as in the TypeScript SDK. The latest indexed block may be several slots behind;
+its slot is used for chain evidence, not as the clock for a fresh transaction.
+For standard preprod, no slot override is needed. `maxTimeoutSeconds` comes from
+the resource server's quote; settlement waiting time does not change that limit.
 
 | Key | Required | Notes |
 |---|---|---|
@@ -105,11 +111,11 @@ chain backend, scheme, settlement service and `/supported` entry per network. So
 serving mainnet and preprod from one process needs no code change, only a second
 list entry.
 
-Two things stay **global** rather than per network, and both matter if you mix
-them: the whole `x402.settle` block (`confirmation-depth`, `accept-mempool`,
-timeouts) applies to every network, and `/supported` advertises one
-`l1Confirmations` range for all of them. You cannot currently run mainnet at
-depth 3 while preprod runs at 1.
+The `x402.settle` operator settings (`accept-mempool`, timeouts and rollback
+watch) apply to every network, and `/supported` advertises the same allowed
+`l1Confirmations` range for each. Resource servers choose the required depth per
+payment through `confirmationPolicy`, so different networks can use different
+requested depths.
 
 ### Loading networks from an external file
 
@@ -173,11 +179,11 @@ per-policy behavior.
 
 | Key | Default | Notes |
 |---|---|---|
-| `x402.settle.confirmation-timeout` | `180s` | How long `/settle` waits |
-| `x402.settle.confirmation-depth` | `1` | Blocks before `CONFIRMED` |
-| `x402.settle.poll-interval` | `3s` | Inclusion poll cadence |
+| `x402.settle.confirmation-timeout` | `75s` | How long `/settle` waits (below the upstream HTTP client’s 90s timeout) |
+| `x402.settle.confirmation-depth` | `1` | Deprecated; requests use confirmationPolicy (default 1) |
+| `x402.settle.poll-interval` | `5s` | Inclusion poll cadence |
 | `x402.settle.accept-mempool` | `false` | **Keep false** |
-| `x402.settle.idempotent-replay` | `false` | Replay a confirmed settlement |
+| `x402.settle.idempotent-replay` | `false` | Deprecated; retries always reconcile current evidence |
 | `x402.settle.stability-window` | `10m` | Rollback watch window |
 | `x402.settle.reconcile-horizon` | `24h` | TTL-less expiry fallback |
 
@@ -188,16 +194,17 @@ per-policy behavior.
   resource server can quote it. Both conditions are required — an operator
   opt-in cannot weaken a stricter 402, and a 402 cannot force an operator to
   accept reversible evidence.
-- **`confirmation-depth`** — the fallback when a 402 carries no
-  `confirmationPolicy`; a 402 that declares one always wins. It counts blocks
-  **newer** than the one containing the payment, so `0` is canonical inclusion
-  and `1` means one block on top. 1 is fine for low-value flows; raise it for
-  higher-value ones. It trades latency for rollback resistance.
-- **`stability-window`** — how long a `CONFIRMED` row stays under rollback watch.
-  Shorter than realistic rollback depth means a rolled-back payment stays
-  wrongly confirmed.
-- **`idempotent-replay`** — even when on, a replay inside the stability window
-  re-checks the chain and demotes rather than returning stale success.
+- **`confirmation-depth`** — retained for configuration compatibility. The wire
+  policy `extra.confirmationPolicy.l1Confirmations` determines settlement depth,
+  defaulting to `1` when omitted. Depth counts blocks newer than the payment's
+  block: `0` means canonical inclusion. An explicit null policy is invalid.
+- **`stability-window`** — controls the reconciler's rollback watch. HTTP retries
+  always check current evidence, including outside this window.
+- **`idempotent-replay`** — retained for configuration compatibility but no longer
+  controls retries. Matching retries reconcile the existing transaction and do
+  not submit again. Resource servers must persist their own operation-consumption
+  state; facilitator success is evidence of payment, not permission to repeat a
+  business operation.
 
 ## Duplicate cache / claim TTL
 
@@ -205,8 +212,9 @@ per-policy behavior.
 |---|---|---|
 | `x402.duplicate-cache.ttl` | `120s` | Also the settlement **claim TTL** |
 
-One key, two jobs: a `CLAIMED` row older than this is considered abandoned by a
-dead worker and may be reclaimed. Set it above your realistic submit latency —
+A new-format, provably pre-broadcast `CLAIMED` row older than this may be
+reclaimed by another worker. Legacy rows and any possibly broadcast row remain
+observation-only. Set it above your realistic submit latency —
 too low and a live worker's claim gets stolen mid-flight.
 
 ## HTTP
@@ -281,7 +289,6 @@ x402:
           base-url: https://cardano-mainnet.blockfrost.io/api/v0
           project-id: ${BLOCKFROST_PROJECT_ID}
   settle:
-    confirmation-depth: 3
     accept-mempool: false
   masumi:
     allowed-script-hashes:
@@ -293,6 +300,9 @@ x402:
   http:
     cors-allowed-origins: [ "https://your-resource-server.example" ]
 ```
+
+Select the depth in each resource-server quote, for example
+`extra: {confirmationPolicy: {l1Confirmations: 3}}`.
 
 Work through the [mainnet readiness
 checklist](../deploy/README.md#mainnet-readiness-checklist) before going live.

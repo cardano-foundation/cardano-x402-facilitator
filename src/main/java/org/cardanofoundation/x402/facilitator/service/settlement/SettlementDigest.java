@@ -12,7 +12,8 @@ import java.util.Map;
  * Settlement digest: SHA-256 over a canonical-JSON serialization of the
  * PaymentRequirements PLUS the resource identity — a resource URL identifies
  * an endpoint, requirements alone would let two identically-priced resources
- * share one payment.
+ * share one payment. Confirmation policy is excluded from new bindings so a verified
+ * retry may strengthen its evidence threshold without changing the underlying purchase.
  */
 public final class SettlementDigest {
 
@@ -23,6 +24,15 @@ public final class SettlementDigest {
     }
 
     public static String compute(PaymentRequirements requirements, Map<String, Object> resource) {
+        Map<String, Object> extra = requirements.extra() == null ? null : new LinkedHashMap<>(requirements.extra());
+        if (extra != null) extra.remove("confirmationPolicy");
+        return computeLegacy(new PaymentRequirements(requirements.scheme(), requirements.network(),
+                requirements.asset(), requirements.amount(), requirements.payTo(), requirements.maxTimeoutSeconds(),
+                extra), resource);
+    }
+
+    /** V1 digests include confirmationPolicy; retained solely to authenticate legacy retries. */
+    public static String computeLegacy(PaymentRequirements requirements, Map<String, Object> resource) {
         try {
             Map<String, Object> canonical = new LinkedHashMap<>();
             canonical.put("requirements", requirements);

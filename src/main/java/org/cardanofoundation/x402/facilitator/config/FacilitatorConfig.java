@@ -10,9 +10,13 @@ import org.cardanofoundation.x402.facilitator.service.settlement.SettlementGate;
 import org.cardanofoundation.x402.facilitator.service.settlement.SettlementReconciler;
 import org.cardanofoundation.x402.facilitator.service.settlement.SettlementService;
 import org.cardanofoundation.x402.facilitator.service.verification.ExactCardanoScheme;
+import org.cardanofoundation.x402.facilitator.service.verification.Phase1Validator;
 import org.cardanofoundation.x402.facilitator.service.verification.decoder.CardanoTransactionDecoder;
 import org.cardanofoundation.x402.facilitator.service.verification.method.TransferMethodVerifier;
 import org.cardanofoundation.x402.facilitator.service.verification.method.masumi.MasumiTransferVerifier;
+import org.cardanofoundation.x402.facilitator.service.verification.method.masumi.MasumiRegistryValidator;
+import org.cardanofoundation.x402.facilitator.service.verification.method.masumi.MasumiDeploymentValidator;
+import org.springframework.beans.factory.ObjectProvider;
 import org.cardanofoundation.x402.facilitator.service.verification.method.script.ScriptTransferVerifier;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
@@ -33,8 +37,11 @@ public class FacilitatorConfig {
 
     @Bean
     public MasumiTransferVerifier masumiTransferVerifier(
-            X402Properties props, Map<String, ChainBackendFactory.ChainBackend> chainBackends) {
-        return new MasumiTransferVerifier(masumiClocks(chainBackends), allowedScriptHashes(props));
+            X402Properties props, Map<String, ChainBackendFactory.ChainBackend> chainBackends,
+            ObjectProvider<MasumiRegistryValidator> registryValidator,
+            ObjectProvider<MasumiDeploymentValidator> deploymentValidator) {
+        return new MasumiTransferVerifier(masumiClocks(chainBackends), allowedScriptHashes(props),
+                registryValidator.getIfAvailable(), deploymentValidator.getIfAvailable());
     }
 
     /** Per-network clocks (applying any slot-config override) for the Masumi M8 deadline. */
@@ -86,7 +93,8 @@ public class FacilitatorConfig {
                                             CardanoTransactionDecoder decoder,
                                             List<TransferMethodVerifier> methodVerifiers,
                                             SettlementRepository settlementRepository,
-                                            Clock facilitatorClock) {
+                                            Clock facilitatorClock,
+                                            ObjectProvider<Phase1Validator> phase1Validator) {
         int maxTxBytes = props.verification() == null ? 32768 : props.verification().maxTxBytesOrDefault();
         SettlementService.Config settleConfig = settlementConfig(props);
         // `/supported` must describe the settlement this operator will actually
@@ -97,7 +105,7 @@ public class FacilitatorConfig {
             ChainBackendFactory.ChainBackend backend = chainBackends.get(entry.id());
             ExactCardanoScheme scheme = new ExactCardanoScheme(
                     backend.chainService(), backend.paramsProvider(), decoder, methodVerifiers, maxTxBytes,
-                    backend.networkClock());
+                    backend.networkClock(), phase1Validator.getIfAvailable());
             SettlementService settlement = new SettlementService(
                     settlementRepository, scheme, backend.chainService(), decoder,
                     settleConfig, facilitatorClock);
@@ -108,8 +116,9 @@ public class FacilitatorConfig {
     }
 
     @Bean
-    public SettlementGate settlementGate(Map<String, ChainBackendFactory.ChainBackend> chainBackends) {
-        return new SettlementGate(chainServicesByNetwork(chainBackends));
+    public SettlementGate settlementGate(Map<String, ChainBackendFactory.ChainBackend> chainBackends,
+                                         SettlementRepository repository, CardanoTransactionDecoder decoder) {
+        return new SettlementGate(chainServicesByNetwork(chainBackends), repository, decoder);
     }
 
     @Bean
@@ -138,7 +147,7 @@ public class FacilitatorConfig {
         X402Properties.Settle s = props.settle();
         X402Properties.DuplicateCache d = props.duplicateCache();
         return new SettlementService.Config(
-                s == null ? Duration.ofSeconds(180) : s.confirmationTimeoutOrDefault(),
+                s == null ? Duration.ofSeconds(75) : s.confirmationTimeoutOrDefault(),
                 s == null ? 1 : s.confirmationDepthOrDefault(),
                 s != null && s.acceptMempoolOrDefault(),
                 s != null && s.idempotentReplayOrDefault(),

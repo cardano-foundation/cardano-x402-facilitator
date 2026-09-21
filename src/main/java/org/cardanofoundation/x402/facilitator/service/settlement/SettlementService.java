@@ -1,44 +1,37 @@
 package org.cardanofoundation.x402.facilitator.service.settlement;
 
-import org.cardanofoundation.x402.facilitator.chain.ChainLookupException;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.log4j.Log4j2;
 import org.cardanofoundation.x402.facilitator.chain.FacilitatorChainService;
 import org.cardanofoundation.x402.facilitator.model.ErrorCodes;
-import org.cardanofoundation.x402.facilitator.model.entity.SettlementRecord;
-import org.cardanofoundation.x402.facilitator.model.entity.SettlementRecord.Status;
-import org.cardanofoundation.x402.facilitator.model.protocol.PaymentPayload;
-import org.cardanofoundation.x402.facilitator.model.protocol.PaymentRequirements;
-import org.cardanofoundation.x402.facilitator.model.protocol.ProtocolJson;
-import org.cardanofoundation.x402.facilitator.model.protocol.SettleResponse;
-import org.cardanofoundation.x402.facilitator.model.protocol.VerifyResponse;
 import org.cardanofoundation.x402.facilitator.model.chain.InclusionResult;
 import org.cardanofoundation.x402.facilitator.model.chain.SubmissionResult;
+import org.cardanofoundation.x402.facilitator.model.entity.SettlementRecord;
+import org.cardanofoundation.x402.facilitator.model.entity.SettlementRecord.Status;
+import org.cardanofoundation.x402.facilitator.model.entity.SettlementRecord.SubmissionProvenance;
+import org.cardanofoundation.x402.facilitator.model.protocol.*;
 import org.cardanofoundation.x402.facilitator.model.verification.DecodedTransaction;
 import org.cardanofoundation.x402.facilitator.repository.SettlementRepository;
+import org.cardanofoundation.x402.facilitator.service.registry.CardanoNetworks;
 import org.cardanofoundation.x402.facilitator.service.verification.CardanoPolicies;
 import org.cardanofoundation.x402.facilitator.service.verification.ExactCardanoScheme;
 import org.cardanofoundation.x402.facilitator.service.verification.decoder.CardanoTransactionDecoder;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.log4j.Log4j2;
+import org.cardanofoundation.x402.facilitator.service.verification.method.masumi.MasumiDigests;
 
 import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.Duration;
 import java.util.Base64;
 import java.util.Map;
-import java.util.Optional;
 import java.util.UUID;
 
-/**
- * The settlement pipeline. Owns journal, claim, submission and inclusion;
- * depends one-way on the scheme for re-verification.
- */
+/** Durable, fenced single-broadcast settlement with freshly checked evidence on every retry. */
 @Log4j2
 @RequiredArgsConstructor
 public class SettlementService {
-
+    /** confirmationDepth/idempotentReplay are retained for configuration migration only. */
     public record Config(Duration confirmationTimeout, int confirmationDepth, boolean acceptMempool,
-                         boolean idempotentReplay, Duration stabilityWindow, Duration claimTtl) {
-    }
+                         boolean idempotentReplay, Duration stabilityWindow, Duration claimTtl) { }
 
     private final SettlementRepository repo;
     private final ExactCardanoScheme scheme;
@@ -48,295 +41,219 @@ public class SettlementService {
     private final Clock clock;
 
     public SettleResponse settle(PaymentPayload payload, PaymentRequirements requirements) {
-        String network = payload.accepted() != null ? payload.accepted().network() : requirements.network();
+        String network = CardanoNetworks.normalize(requirements.network());
+        Integer depth = CardanoPolicies.l1Confirmations(requirements.extra());
+        if (depth == null) return SettleResponse.fail(ErrorCodes.REQUIREMENTS_POLICY, null, network);
         String txB64 = str(payload.payload(), "transaction");
-        if (txB64 == null || txB64.isEmpty()) {
-            return SettleResponse.fail(ErrorCodes.INVALID_PAYLOAD, null, network);
-        }
+        if (txB64 == null || txB64.isEmpty()) return SettleResponse.fail(ErrorCodes.INVALID_PAYLOAD, null, network);
         DecodedTransaction tx;
         try {
             tx = decoder.decode(txB64);
         } catch (CardanoTransactionDecoder.TransactionDecodeException e) {
             return SettleResponse.fail(ErrorCodes.DECODE_FAILED, e.getMessage(), network);
         }
-        String txHash = tx.txHashHex().toLowerCase();
+        String hash = tx.txHashHex().toLowerCase();
         String digest = SettlementDigest.compute(requirements, payload.resource());
-
-        // Step 1 — journal lookup (idempotency/duplicate, digest-bound)
-        Optional<SettlementRecord> existing = repo.find(txHash);
-        if (existing.isPresent()) {
-            SettleResponse short_ = handleExisting(existing.get(), payload, requirements, digest, network);
-            if (short_ != null) return short_;
+        SettlementRecord existing = repo.find(hash).orElse(null);
+        if (existing != null && !reclaimable(existing)) {
+            return resume(existing, payload, requirements, digest, depth, network);
         }
 
-        // Step 2 — full re-verification
-        VerifyResponse verify = scheme.verify(payload, requirements);
-        if (!verify.isValid()) {
-            return SettleResponse.fail(
-                    verify.invalidReason() != null ? verify.invalidReason() : "verification_failed",
-                    verify.invalidMessage(), network);
-        }
-        String payer = verify.payer();
-        String nonce = normalizedNonce(str(payload.payload(), "nonce"));
-
-        // Step 3 — atomic, fenced claim
-        UUID attemptId = UUID.randomUUID();
-        SettlementRecord claim = new SettlementRecord(txHash, attemptId, digest, network,
-                Status.CLAIMED, payer, requirements.payTo(), requirements.asset(),
-                safeAmount(requirements.amount()), transferMethod(requirements), nonce, tx.ttlSlot(),
-                clock.instant(), null, null, null, null, null, null);
+        VerifyResponse verified = scheme.verify(payload, requirements);
+        if (!verified.isValid()) return invalid(verified, network);
+        String terms = termsDigest(requirements);
+        UUID attempt = UUID.randomUUID();
+        SettlementRecord claim = new SettlementRecord(hash, attempt, digest, network, Status.CLAIMED,
+                verified.payer(), requirements.payTo(), requirements.asset(), new BigDecimal(requirements.amount()),
+                method(requirements), normalizedNonce(str(payload.payload(), "nonce")), tx.ttlSlot(), clock.instant(),
+                null, null, null, null, null, null, depth, SubmissionProvenance.LOCAL, false, terms);
         if (!repo.insertClaim(claim) && !repo.reclaim(claim, config.claimTtl())) {
-            return SettleResponse.fail(ErrorCodes.DUPLICATE_SETTLEMENT, null, network);
+            SettlementRecord winner = repo.find(hash).orElse(null);
+            return winner == null ? SettleResponse.fail(ErrorCodes.DUPLICATE_SETTLEMENT,
+                    "Masumi terms already claimed by another transaction", network)
+                    : resume(winner, payload, requirements, digest, depth, network);
         }
-
-        // Rule 9: the depth comes from the 402's confirmationPolicy, not the
-        // operator's default. A server that quoted `l1Confirmations: 2` must not
-        // release on one, and one that quoted 0 should not be made to wait for
-        // the operator's preferred depth.
-        Integer declared = CardanoPolicies.l1Confirmations(requirements.extra());
-        int requiredDepth = declared != null ? declared : config.confirmationDepth();
-
-        // Client mode: the payer already broadcast. Submitting again is not a
-        // harmless retry — the transaction is on the network, so this side must
-        // authenticate it and wait for the agreed depth instead. verify() above
-        // has already established that the chain has a record of these bytes.
-        String submissionMode = CardanoPolicies.submissionMode(payload.payload());
-        if (CardanoPolicies.SUBMISSION_CLIENT.equals(submissionMode)) {
-            if (!repo.casTransition(txHash, attemptId, Status.CLAIMED, Status.SUBMITTED,
-                    Map.of("submitted_at", clock.instant()))) {
-                return SettleResponse.fail(ErrorCodes.DUPLICATE_SETTLEMENT, null, network);
-            }
-            return awaitAndRecord(txHash, attemptId, requiredDepth, network, payer);
+        // The durable fence precedes all wire I/O. A paused former owner cannot enter this path.
+        if (!repo.casTransition(hash, attempt, Status.CLAIMED, Status.SUBMITTING, Map.of())) {
+            return SettleResponse.pending(hash, network, verified.payer());
         }
-
-        // Step 4 — SUBMITTING persisted BEFORE any wire I/O
-        if (!repo.casTransition(txHash, attemptId, Status.CLAIMED, Status.SUBMITTING, Map.of())) {
-            return SettleResponse.fail(ErrorCodes.DUPLICATE_SETTLEMENT, null, network);
+        SubmissionResult submission;
+        try {
+            submission = chain.submitTransaction(Base64.getDecoder().decode(txB64));
+        } catch (RuntimeException e) {
+            // Unclassified provider exceptions cannot prove that nothing was sent.
+            log.warn("unclassified submission outcome for {}", hash);
+            return SettleResponse.pending(hash, network, verified.payer());
         }
-        SubmissionResult submission = chain.submitTransaction(Base64.getDecoder().decode(txB64));
         switch (submission) {
+            case SubmissionResult.NotSubmitted noSend -> {
+                repo.releaseUnsubmitted(hash, attempt);
+                return SettleResponse.fail(ErrorCodes.SETTLEMENT_FAILED, noSend.cause(), network);
+            }
             case SubmissionResult.Rejected rejected -> {
-                repo.casTransition(txHash, attemptId, Status.SUBMITTING, Status.FAILED,
-                        Map.of("error_reason", ErrorCodes.SETTLEMENT_FAILED));
-                return SettleResponse.fail(ErrorCodes.SETTLEMENT_FAILED, rejected.cause(), network);
+                repo.casTransition(hash, attempt, Status.SUBMITTING, Status.FAILED,
+                        Map.of("error_reason", ErrorCodes.SETTLEMENT_DEFINITIVELY_REJECTED));
+                return SettleResponse.failWithTx(ErrorCodes.SETTLEMENT_DEFINITIVELY_REJECTED,
+                        hash, network, verified.payer(), null);
             }
-            case SubmissionResult.NotSubmitted notSubmitted -> {
-                // nothing broadcast — claim safely released for a legitimate retry
-                repo.casTransition(txHash, attemptId, Status.SUBMITTING, Status.FAILED,
-                        Map.of("error_reason", ErrorCodes.SETTLEMENT_FAILED));
-                return SettleResponse.fail(ErrorCodes.SETTLEMENT_FAILED, notSubmitted.cause(), network);
-            }
-            case SubmissionResult.Unknown unknown -> {
-                // possibly broadcast — row STAYS SUBMITTING; only the reconciler resolves it
-                log.warn("submission outcome unknown for {}: {}", txHash, unknown.cause());
-                return SettleResponse.failWithTx(ErrorCodes.SETTLEMENT_NOT_CONFIRMED,
-                        txHash, network, payer, null);
+            case SubmissionResult.Unknown ignored -> {
+                return SettleResponse.pending(hash, network, verified.payer());
             }
             case SubmissionResult.Accepted accepted -> {
-                repo.casTransition(txHash, attemptId, Status.SUBMITTING, Status.SUBMITTED,
-                        Map.of("submitted_at", clock.instant()));
-            }
-        }
-
-        return awaitAndRecord(txHash, attemptId, requiredDepth, network, payer);
-    }
-
-    /**
-     * Waits for the payment to reach the depth the 402 asked for, then records
-     * the outcome. Shared by both submission modes: only who broadcast differs,
-     * not what counts as settled.
-     *
-     * @param txHash        the settled transaction id.
-     * @param attemptId     fencing token for this attempt's state transitions.
-     * @param requiredDepth the 402's `l1Confirmations`.
-     * @param network       the payment network.
-     * @param payer         the resolved payer address.
-     * @return the settle response to return to the caller.
-     */
-    private SettleResponse awaitAndRecord(String txHash, UUID attemptId, int requiredDepth,
-                                          String network, String payer) {
-        // Mempool evidence settles a payment only when the 402 asked for it (-1)
-        // AND the operator opted in. Either alone is not enough: an operator's
-        // convenience must not weaken a stricter 402, and a 402 must not force an
-        // operator to accept reversible evidence.
-        if (requiredDepth <= -1) {
-            if (!config.acceptMempool()) {
-                return SettleResponse.fail(ErrorCodes.SETTLEMENT_NOT_CONFIRMED,
-                        "this facilitator does not settle on mempool evidence", network);
-            }
-            InclusionResult seen = chain.awaitInclusion(txHash, -1, config.confirmationTimeout());
-            if (seen instanceof InclusionResult.Included included) {
-                return recordConfirmed(txHash, attemptId, included, network, payer);
-            }
-            if (seen instanceof InclusionResult.Mempool) {
-                return SettleResponse.ok(txHash, network, payer, "mempool");
-            }
-            repo.casTransition(txHash, attemptId, Status.SUBMITTED, Status.NOT_CONFIRMED, Map.of());
-            return SettleResponse.failWithTx(ErrorCodes.SETTLEMENT_NOT_CONFIRMED, txHash, network,
-                    payer, null);
-        }
-
-        // Step 5 — await inclusion at the depth the payment demanded
-        InclusionResult inclusion = chain.awaitInclusion(txHash, requiredDepth,
-                config.confirmationTimeout());
-        if (inclusion instanceof InclusionResult.Included included
-                && included.depth() >= requiredDepth) {
-            return recordConfirmed(txHash, attemptId, included, network, payer);
-        }
-
-        // Step 6 — not confirmed in time: row kept (NOT_CONFIRMED), no extra.status claim
-        repo.casTransition(txHash, attemptId, Status.SUBMITTED, Status.NOT_CONFIRMED, Map.of());
-        return SettleResponse.failWithTx(ErrorCodes.SETTLEMENT_NOT_CONFIRMED, txHash, network, payer, null);
-    }
-
-    private SettleResponse recordConfirmed(String txHash, UUID attemptId,
-                                           InclusionResult.Included included, String network,
-                                           String payer) {
-        SettleResponse ok = SettleResponse.ok(txHash, network, payer, "confirmed");
-        repo.casTransition(txHash, attemptId, Status.SUBMITTED, Status.CONFIRMED, Map.of(
-                "confirmed_at", clock.instant(),
-                "confirmed_slot", included.slot(),
-                "confirmed_block", included.blockHash(),
-                "response_json", toJson(ok)));
-        return ok;
-    }
-
-    /** @return a short-circuit response, or null to proceed with a fresh attempt. */
-    private SettleResponse handleExisting(SettlementRecord rec, PaymentPayload payload,
-                                          PaymentRequirements requirements, String digest, String network) {
-        switch (rec.status()) {
-            case CONFIRMED -> {
-                if (!digest.equals(rec.requirementsDigest())) {
-                    // different purchase reusing a settled tx: fall through — re-verification
-                    // fails naturally on the spent nonce (nonce_not_on_chain)
-                    return null;
+                if (!hash.equalsIgnoreCase(accepted.txHash())) {
+                    // An unrelated provider hash proves no acceptance of these bytes.
+                    return SettleResponse.pending(hash, network, verified.payer());
                 }
-                if (!config.idempotentReplay()) {
-                    return SettleResponse.fail(ErrorCodes.DUPLICATE_SETTLEMENT, null, network);
-                }
-                return replay(rec, payload, requirements, network);
-            }
-            case CLAIMED -> {
-                boolean stale = rec.claimedAt().isBefore(clock.instant().minus(config.claimTtl()));
-                return stale ? null : SettleResponse.fail(ErrorCodes.DUPLICATE_SETTLEMENT, null, network);
-            }
-            case SUBMITTING, SUBMITTED, NOT_CONFIRMED -> {
-                InclusionResult inc;
-                try {
-                    inc = chain.checkInclusion(rec.txHash());
-                } catch (ChainLookupException e) {
-                    // lookup errors are never absence: preserve state, retryable failure
-                    return SettleResponse.fail(ErrorCodes.CHAIN_LOOKUP_FAILED, e.getMessage(), network);
-                }
-                if (inc instanceof InclusionResult.Included included
-                        && included.depth() >= config.confirmationDepth()) {
-                    promote(rec, included, network);
-                    SettlementRecord promoted = repo.find(rec.txHash()).orElse(rec);
-                    return handleExisting(promoted, payload, requirements, digest, network);
-                }
-                return SettleResponse.fail(ErrorCodes.DUPLICATE_SETTLEMENT, null, network);
-            }
-            case EXPIRED -> {
-                InclusionResult inc;
-                try {
-                    inc = chain.checkInclusion(rec.txHash());
-                } catch (ChainLookupException e) {
-                    return SettleResponse.fail(ErrorCodes.CHAIN_LOOKUP_FAILED, e.getMessage(), network);
-                }
-                if (inc instanceof InclusionResult.Included included
-                        && included.depth() >= config.confirmationDepth()) {
-                    promoteFrom(rec, Status.EXPIRED, included, network);
-                    SettlementRecord promoted = repo.find(rec.txHash()).orElse(rec);
-                    return handleExisting(promoted, payload, requirements, digest, network);
-                }
-                return null; // proceed — verification reports whatever the chain says
-            }
-            case FAILED -> {
-                return null; // reclaimable
+                repo.casTransition(hash, attempt, Status.SUBMITTING, Status.SUBMITTED,
+                        Map.of("submitted_at", clock.instant(), "submission_accepted", true));
             }
         }
-        return null;
-    }
-
-    /** Opt-in idempotent replay: never check-free, never chain-blind. */
-    private SettleResponse replay(SettlementRecord rec, PaymentPayload payload,
-                                  PaymentRequirements requirements, String network) {
-        VerifyResponse profile = scheme.verifyReplayProfile(payload, requirements,
-                rec.nonceOutref(), rec.payer());
-        if (!profile.isValid()) {
-            return SettleResponse.fail(profile.invalidReason(), profile.invalidMessage(), network);
+        SettlementRecord submitted = repo.find(hash).orElseThrow();
+        if (Integer.valueOf(-1).equals(submitted.selectedConfirmations()) && config.acceptMempool()
+                && submitted.submissionAccepted()) {
+            return repo.recordObservation(submitted, submitted.status(), Map.of())
+                    ? SettleResponse.ok(hash, network, verified.payer(), "mempool")
+                    : SettleResponse.pending(hash, network, verified.payer(), -1);
         }
-        if (rec.confirmedAt() != null
-                && rec.confirmedAt().isAfter(clock.instant().minus(config.stabilityWindow()))) {
-            InclusionResult inc;
-            try {
-                inc = chain.checkInclusion(rec.txHash());
-            } catch (ChainLookupException e) {
-                return SettleResponse.fail(ErrorCodes.CHAIN_LOOKUP_FAILED, e.getMessage(), network);
-            }
-            if (!(inc instanceof InclusionResult.Included included)
-                    || included.depth() < config.confirmationDepth()) {
-                // rollback discovered synchronously: fenced demotion, truthful response
-                repo.casTransition(rec.txHash(), rec.attemptId(), Status.CONFIRMED, Status.SUBMITTED,
-                        Map.of());
-                return SettleResponse.failWithTx(ErrorCodes.SETTLEMENT_NOT_CONFIRMED,
-                        rec.txHash(), network, rec.payer(), null);
-            }
-        }
-        if (rec.responseJson() != null) {
-            try {
-                return ProtocolJson.mapper().readValue(rec.responseJson(), SettleResponse.class);
-            } catch (Exception e) {
-                log.warn("stored response unreadable for {}, rebuilding", rec.txHash());
-            }
-        }
-        return SettleResponse.ok(rec.txHash(), network, rec.payer(), "confirmed");
-    }
-
-    private void promote(SettlementRecord rec, InclusionResult.Included included, String network) {
-        promoteFrom(rec, rec.status(), included, network);
-    }
-
-    private void promoteFrom(SettlementRecord rec, Status from, InclusionResult.Included included,
-                             String network) {
-        SettleResponse ok = SettleResponse.ok(rec.txHash(), network, rec.payer(), "confirmed");
-        repo.casTransition(rec.txHash(), rec.attemptId(), from, Status.CONFIRMED, Map.of(
-                "confirmed_at", clock.instant(),
-                "confirmed_slot", included.slot(),
-                "confirmed_block", included.blockHash(),
-                "response_json", toJson(ok)));
-    }
-
-    private static String toJson(SettleResponse response) {
         try {
-            return ProtocolJson.mapper().writeValueAsString(response);
-        } catch (Exception e) {
+            InclusionResult evidence = chain.awaitInclusion(hash, depth, config.confirmationTimeout());
+            if (evidence instanceof InclusionResult.NotSeen) evidence = chain.checkInclusion(hash);
+            return observe(repo.find(hash).orElse(submitted), evidence, depth, network, verified.payer(), false);
+        } catch (RuntimeException e) {
+            return SettleResponse.pending(hash, network, verified.payer());
+        }
+    }
+
+    private SettleResponse resume(SettlementRecord rec, PaymentPayload payload, PaymentRequirements requirements,
+                                  String digest, int depth, String network) {
+        boolean sameBinding = digest.equals(rec.requirementsDigest()) || (rec.isLegacy()
+                && SettlementDigest.computeLegacy(requirements, payload.resource()).equals(rec.requirementsDigest()));
+        if (!sameBinding) return SettleResponse.fail(ErrorCodes.DUPLICATE_SETTLEMENT,
+                "transaction is bound to different payment requirements or resource", network);
+        if (!rec.isLegacy() && rec.status() == Status.FAILED) {
+            return SettleResponse.failWithTx(ErrorCodes.SETTLEMENT_DEFINITIVELY_REJECTED,
+                    rec.txHash(), network, rec.payer(), null);
+        }
+        InclusionResult evidence;
+        try {
+            evidence = chain.checkInclusion(rec.txHash());
+        } catch (RuntimeException e) {
+            evidence = null; // Unknown is never absence, and never a reason to broadcast again.
+        }
+        boolean canonical = evidence instanceof InclusionResult.Included;
+        boolean locallyVerifiedBroadcast = !rec.isLegacy() && rec.status() != Status.CLAIMED;
+        VerifyResponse verified = locallyVerifiedBroadcast || canonical
+                ? scheme.verifyBroadcast(payload, requirements, rec.isLegacy() && rec.selectedConfirmations() == null
+                        ? null : rec.payer())
+                : scheme.verify(payload, requirements);
+        if (!verified.isValid()) {
+            if (ErrorCodes.CHAIN_LOOKUP_FAILED.equals(verified.invalidReason())
+                    || (rec.isLegacy() && !canonical && preBroadcastFailure(verified.invalidReason()))) {
+                SettleResponse expired = expireIfProven(rec, evidence, network, rec.payer());
+                return expired != null ? expired : SettleResponse.pending(rec.txHash(), network, rec.payer());
+            }
+            return invalid(verified, network);
+        }
+        if (!repo.bindVerifiedRetry(rec, depth, termsDigest(requirements), verified.payer())) {
+            return SettleResponse.fail(ErrorCodes.DUPLICATE_SETTLEMENT, "payment terms claim conflict", network);
+        }
+        SettlementRecord current = repo.find(rec.txHash()).orElse(rec);
+        if (evidence == null || (!current.isLegacy() && current.status() == Status.CLAIMED)) {
+            return SettleResponse.pending(rec.txHash(), network, verified.payer());
+        }
+        return observe(current, evidence, depth, network, verified.payer(), true);
+    }
+
+    private SettleResponse observe(SettlementRecord rec, InclusionResult evidence, int requestedDepth,
+                                   String network, String payer, boolean resumed) {
+        if (resumed) {
+            SettleResponse expired = expireIfProven(rec, evidence, network, payer);
+            if (expired != null) return expired;
+        }
+        int depth = Math.max(requestedDepth, rec.selectedConfirmations() == null
+                ? requestedDepth : rec.selectedConfirmations());
+        if (evidence instanceof InclusionResult.Included included && included.depth() >= Math.max(0, depth)) {
+            SettleResponse ok = SettleResponse.confirmed(rec.txHash(), network, payer, included.depth());
+            boolean recorded = repo.recordObservation(rec, Status.CONFIRMED, Map.of(
+                    "confirmed_at", clock.instant(), "confirmed_slot", included.slot(),
+                    "confirmed_block", included.blockHash(), "response_json", json(ok), "payer", payer));
+            return recorded ? ok : SettleResponse.pending(rec.txHash(), network, payer);
+        }
+        // Legacy V1 states never manufacture authenticated mempool acceptance.
+        if (!rec.isLegacy() && depth == -1 && config.acceptMempool()
+                && (evidence instanceof InclusionResult.Mempool
+                    || (rec.submissionAccepted() && rec.confirmedAt() == null))) {
+            return repo.recordObservation(rec, rec.status(), Map.of())
+                    ? SettleResponse.ok(rec.txHash(), network, payer, "mempool")
+                    : SettleResponse.pending(rec.txHash(), network, payer, -1);
+        }
+        if (rec.status() == Status.CONFIRMED) {
+            repo.recordObservation(rec, Status.SUBMITTED, Map.of());
+        } else if (rec.status() == Status.SUBMITTED) {
+            repo.recordObservation(rec, Status.NOT_CONFIRMED, Map.of());
+        }
+        Integer observed = evidence instanceof InclusionResult.Included included ? included.depth()
+                : evidence instanceof InclusionResult.Mempool ? -1 : null;
+        if (observed == null && rec.submissionAccepted() && rec.confirmedAt() == null) observed = -1;
+        return SettleResponse.pending(rec.txHash(), network, payer, observed);
+    }
+
+    /** A historical EXPIRED status alone is insufficient, especially for V1 horizon-expired rows. */
+    private SettleResponse expireIfProven(SettlementRecord rec, InclusionResult evidence,
+                                         String network, String payer) {
+        if (!(evidence instanceof InclusionResult.NotSeen) || rec.txTtlSlot() == null) return null;
+        long currentSlot;
+        try {
+            currentSlot = chain.getCurrentSlot();
+        } catch (RuntimeException e) {
             return null;
         }
+        if (currentSlot <= rec.txTtlSlot() || currentSlot - rec.txTtlSlot() <= 120) return null;
+        if (!repo.recordObservation(rec, Status.EXPIRED, Map.of())) {
+            return SettleResponse.pending(rec.txHash(), network, payer);
+        }
+        return SettleResponse.failWithTx(ErrorCodes.SETTLEMENT_FAILED, rec.txHash(), network, payer, "expired");
     }
 
-    private static String transferMethod(PaymentRequirements requirements) {
+    private boolean reclaimable(SettlementRecord rec) {
+        return !rec.isLegacy() && rec.status() == Status.CLAIMED && !rec.submissionAccepted()
+                && rec.submittedAt() == null && rec.claimedAt().isBefore(clock.instant().minus(config.claimTtl()));
+    }
+
+    private static boolean preBroadcastFailure(String error) {
+        return ErrorCodes.NONCE_NOT_ON_CHAIN.equals(error) || ErrorCodes.INPUT_NOT_AVAILABLE.equals(error)
+                || ErrorCodes.TTL_EXPIRED.equals(error) || ErrorCodes.NOT_YET_VALID.equals(error);
+    }
+
+    private static SettleResponse invalid(VerifyResponse verified, String network) {
+        return SettleResponse.fail(verified.invalidReason(), verified.invalidMessage(), network);
+    }
+
+    private static String termsDigest(PaymentRequirements requirements) {
+        return "masumi".equals(method(requirements)) ? MasumiDigests.computeTermsDigest(
+                MasumiDigests.buildSignedTerms(requirements.extra(), requirements)) : null;
+    }
+
+    private static String method(PaymentRequirements requirements) {
         return requirements.extra() == null ? "default"
                 : String.valueOf(requirements.extra().getOrDefault("assetTransferMethod", "default"));
     }
 
-    private static BigDecimal safeAmount(String amount) {
-        try {
-            return new BigDecimal(amount);
-        } catch (RuntimeException e) {
-            return null;
-        }
-    }
-
     private static String normalizedNonce(String nonce) {
-        if (nonce == null) return null;
         int sep = nonce.indexOf('#');
-        if (sep < 0) return nonce.toLowerCase();
         return nonce.substring(0, sep).toLowerCase() + "#" + Integer.parseInt(nonce.substring(sep + 1));
     }
 
     private static String str(Map<String, Object> map, String key) {
-        Object v = map == null ? null : map.get(key);
-        return v instanceof String s ? s : null;
+        Object value = map == null ? null : map.get(key);
+        return value instanceof String s ? s : null;
+    }
+
+    static String json(SettleResponse response) {
+        try {
+            return ProtocolJson.mapper().writeValueAsString(response);
+        } catch (Exception e) {
+            throw new IllegalStateException("cannot serialize settlement evidence", e);
+        }
     }
 }

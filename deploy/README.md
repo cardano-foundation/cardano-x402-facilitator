@@ -53,16 +53,45 @@ Key environment variables (all have defaults):
 | `YACI_PROTOCOL_MAGIC` | `1` (preprod) | yaci-store sync (`764824073` mainnet, `2` preview) |
 | `MITHRIL_SYNC` | `true` | mithril-sync (set `false` to skip snapshot restore) |
 
-The app image (`deploy/Dockerfile`) is a glibc Temurin JRE — required because the
-`script` assetTransferMethod loads a native aiken UPLC library for parameter
-application.
+The app image ([Dockerfile](../Dockerfile)) uses a glibc Temurin JRE and
+`linux/amd64`. The pinned `aiken-java-binding:0.1.0` includes a Linux x86-64
+native library for Masumi and script parameter application, but no Linux ARM64
+library. All facilitator Compose services select `linux/amd64`, including on
+Apple Silicon, where Docker Desktop runs them under emulation. Direct image
+builds must likewise use `docker build --platform linux/amd64 ...`.
+
+The Docker build runs the offline Masumi and script derivation tests on the
+target platform. Missing or incompatible native libraries fail the build rather
+than first appearing as a payment-time HTTP 500.
+
+If an older ARM64 image reports `UnsatisfiedLinkError` for
+`libaiken_jna_wrapper.so`, rebuild and recreate the facilitator from the project
+root, using the same environment settings as the existing deployment:
+
+```bash
+docker compose -f deploy/docker-compose.yml --profile light up -d --build --no-deps facilitator
+```
+
+For the other profiles, use their corresponding facilitator service. This leaves
+the PostgreSQL service and its settlement journal in place.
 
 ## Verification coverage
 
-All three transfer methods (`default`, `masumi`, `script`) and both submission
-modes are implemented and unit-tested. The rules, in order and with their error
+All three transfer methods (`default`, `masumi`, `script`) use facilitator
+submission, with durable retry reconciliation and pinned TypeScript HTTP
+interoperability tests. The rules, in order and with their error
 codes, are in [docs/verification.md](../docs/verification.md) — not repeated here,
 because a second copy is a copy that goes stale.
+
+## Upgrading to upstream 2.26.0
+
+Read the [compatibility and migration notes](../docs/upstream-compatibility.md)
+before rollout. V2 adds durable confirmation policy, submission provenance and a
+unique Masumi terms claim. Historical V1 rows remain observation-only until a
+validated retry and independent evidence establish their outcome. Preserve the
+journal and upgrade all facilitator writers together; mixed old/new writers do
+not enforce the same claims. The live preprod proof has not been rerun for this
+upgrade.
 
 ## Hardening
 
@@ -72,8 +101,9 @@ Enabled by default:
   → 413; Jackson `StreamReadConstraints` bound nesting/string/number length.
 - **Correlation id** — every request carries `X-Correlation-Id` (echoed + logged
   under `%X{correlationId}`); error bodies are sanitized.
-- **Settlement gate** — `POST /settle` returns 503 when the chain backend is
-  unhealthy, rather than accepting a settlement it cannot confirm.
+- **Settlement gate** — fresh `POST /settle` requests return 503 when the chain
+  backend is unhealthy. Journaled retries reach reconciliation and can return
+  `settlement_pending` without another broadcast.
 - **CORS** — default-deny; opt origins in via `x402.http.cors-allowed-origins`.
 
 Opt-in (off unless configured):
@@ -111,7 +141,9 @@ service itself — see that service's block in `deploy/docker-compose.yml`.
       address is derived and checked regardless; the allowlist narrows it.
 - [ ] Enable API keys and a rate limit; put the facilitator behind TLS.
 - [ ] Confirm `x402.settle.accept-mempool=false` (never grant on mempool).
-- [ ] Review `x402.settle.confirmation-depth` (raise above 1 for higher-value flows).
+- [ ] Set `extra.confirmationPolicy.l1Confirmations` in resource-server quotes
+      to the depth appropriate for the payment (default 1); the old process
+      `confirmation-depth` setting no longer overrides it.
 - [ ] Provision the node with adequate resources; verify Mithril restore
       completes and the node reaches tip before serving traffic.
 - [ ] For yaci-store: confirm the instance is close to tip before serving

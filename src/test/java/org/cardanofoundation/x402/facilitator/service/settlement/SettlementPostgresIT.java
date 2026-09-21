@@ -46,7 +46,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * database, advisory-lock exclusivity, and JSON round-trip — things H2 cannot
  * faithfully validate.
  */
-@Testcontainers(disabledWithoutDocker = true)
+@Testcontainers
 class SettlementPostgresIT {
 
     @Container
@@ -125,16 +125,97 @@ class SettlementPostgresIT {
                 start.await();
                 SettleResponse r = svc.settle(payload(tx), requirements());
                 if (r.success()) successes.incrementAndGet();
-                else if (ErrorCodes.DUPLICATE_SETTLEMENT.equals(r.errorReason())) duplicates.incrementAndGet();
+                else if ("settlement_pending".equals(r.errorReason())) duplicates.incrementAndGet();
                 return null;
             }));
         }
         start.countDown();
         for (Future<?> f : futures) f.get();
         pool.shutdown();
-        assertThat(successes.get()).isEqualTo(1);
-        assertThat(duplicates.get()).isEqualTo(threads - 1);
+        assertThat(successes.get()).isPositive();
+        assertThat(successes.get() + duplicates.get()).isEqualTo(threads);
         assertThat(chain.submitCount).isEqualTo(1);
+    }
+
+    @Test
+    void newClaimsPersistSelectedPolicyAndLocalAcceptance() {
+        String tx = TestTx.buildBase64(TestTx.Spec.defaults());
+        SettleResponse response = serviceA.settle(payload(tx), requirements());
+        assertThat(response.success()).isTrue();
+        Map<String, Object> row = plainA.queryForMap("SELECT selected_confirmations, submission_provenance, "
+                + "submission_accepted FROM facilitator.settlement WHERE tx_hash = ?", response.transaction());
+        assertThat(row).containsEntry("selected_confirmations", 1)
+                .containsEntry("submission_provenance", "LOCAL").containsEntry("submission_accepted", true);
+    }
+
+    @Test
+    void termsRaceClaimsExactlyOneTransactionAndConflictLeavesNoOrphan() throws Exception {
+        String terms = "ab".repeat(32);
+        var pool = Executors.newFixedThreadPool(2);
+        var start = new CountDownLatch(1);
+        String a = "aa".repeat(32), b = "bb".repeat(32);
+        Future<Boolean> fa = pool.submit(() -> { start.await(); return repoA.insertClaim(claim(a, terms)); });
+        Future<Boolean> fb = pool.submit(() -> { start.await(); return repoB.insertClaim(claim(b, terms)); });
+        start.countDown();
+        assertThat(List.of(fa.get(), fb.get())).containsExactlyInAnyOrder(true, false);
+        pool.shutdown();
+        assertThat(plainA.queryForObject("SELECT count(*) FROM facilitator.settlement", Integer.class)).isEqualTo(1);
+        assertThat(repoA.find(a).isPresent() ^ repoA.find(b).isPresent()).isTrue();
+    }
+
+    @Test
+    void rejectedAndExpiredTermsStayBoundAndOnlyOwnedNoSendClaimIsReleased() {
+        for (SettlementRecord.Status terminal : List.of(SettlementRecord.Status.FAILED, SettlementRecord.Status.EXPIRED)) {
+            String terms = terminal == SettlementRecord.Status.FAILED ? "aa".repeat(32) : "bb".repeat(32);
+            var original = claim(terms, terms);
+            assertThat(repoA.insertClaim(original)).isTrue();
+            assertThat(repoA.casTransition(original.txHash(), original.attemptId(), SettlementRecord.Status.CLAIMED,
+                    terminal, Map.of())).isTrue();
+            assertThat(repoB.insertClaim(claim("cc".repeat(32), terms))).isFalse();
+            assertThat(repoB.reclaim(claim(terms, terms), Duration.ZERO)).isFalse();
+        }
+        var noSend = claim("dd".repeat(32), "dd".repeat(32));
+        assertThat(repoA.insertClaim(noSend)).isTrue();
+        assertThat(repoA.casTransition(noSend.txHash(), noSend.attemptId(), SettlementRecord.Status.CLAIMED,
+                SettlementRecord.Status.SUBMITTING, Map.of())).isTrue();
+        assertThat(repoB.releaseUnsubmitted(noSend.txHash(), java.util.UUID.randomUUID())).isFalse();
+        assertThat(repoB.insertClaim(claim("ee".repeat(32), noSend.termsDigest()))).isFalse();
+        assertThat(repoA.releaseUnsubmitted(noSend.txHash(), noSend.attemptId())).isTrue();
+        assertThat(repoB.insertClaim(claim("ee".repeat(32), noSend.termsDigest()))).isTrue();
+    }
+
+    @Test
+    void policyFencePreventsStaleReconcilerPromotionAfterStricterRetry() {
+        var initial = claim("ab".repeat(32), null);
+        assertThat(repoA.insertClaim(initial)).isTrue();
+        assertThat(repoA.casTransition(initial.txHash(), initial.attemptId(), SettlementRecord.Status.CLAIMED,
+                SettlementRecord.Status.SUBMITTED, Map.of())).isTrue();
+        var snapshot = repoA.find(initial.txHash()).orElseThrow();
+        assertThat(repoB.bindVerifiedRetry(snapshot, 5, null)).isTrue();
+        assertThat(repoA.recordObservation(snapshot, SettlementRecord.Status.CONFIRMED, Map.of())).isFalse();
+        assertThat(repoA.find(initial.txHash()).orElseThrow().status()).isEqualTo(SettlementRecord.Status.SUBMITTED);
+    }
+
+    @Test
+    void stalePreSubmitOwnerCannotSubmitAfterAnotherContextReclaims() {
+        var stale = claim("ac".repeat(32), null);
+        assertThat(repoA.insertClaim(stale)).isTrue();
+        plainA.update("UPDATE facilitator.settlement SET claimed_at = now() - interval '1 hour' WHERE tx_hash = ?", stale.txHash());
+        var fresh = claim(stale.txHash(), null);
+        assertThat(repoB.reclaim(fresh, Duration.ofSeconds(2))).isTrue();
+        assertThat(repoA.casTransition(stale.txHash(), stale.attemptId(), SettlementRecord.Status.CLAIMED,
+                SettlementRecord.Status.SUBMITTING, Map.of())).isFalse();
+        assertThat(repoB.casTransition(fresh.txHash(), fresh.attemptId(), SettlementRecord.Status.CLAIMED,
+                SettlementRecord.Status.SUBMITTING, Map.of())).isTrue();
+        assertThat(repoA.reclaim(claim(stale.txHash(), null), Duration.ZERO)).isFalse();
+    }
+
+    private SettlementRecord claim(String hash, String terms) {
+        return new SettlementRecord(hash, java.util.UUID.randomUUID(), "d", "cardano:preprod",
+                SettlementRecord.Status.CLAIMED, TestTx.PAYER_ADDRESS, TestTx.PAY_TO, "lovelace",
+                new java.math.BigDecimal("2000000"), "masumi", TestTx.NONCE, 1000000L,
+                java.time.Instant.now(), null, null, null, null, null, null,
+                1, SettlementRecord.SubmissionProvenance.LOCAL, false, terms);
     }
 
     @Test

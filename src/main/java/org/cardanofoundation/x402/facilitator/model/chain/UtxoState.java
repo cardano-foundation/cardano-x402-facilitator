@@ -1,5 +1,8 @@
 package org.cardanofoundation.x402.facilitator.model.chain;
 
+import java.math.BigInteger;
+import java.util.Map;
+
 /**
  * Tri-state UTxO answer: UNSPENT carries the owning address; SPENT folds
  * "spent" and "never existed" into one case (only the live UTxO set is
@@ -8,7 +11,9 @@ package org.cardanofoundation.x402.facilitator.model.chain;
  */
 public sealed interface UtxoState {
 
-    record Unspent(String ownerAddress) implements UtxoState {
+    record Unspent(String ownerAddress, BigInteger coin, Map<String, BigInteger> assets) implements UtxoState {
+        public Unspent { assets = assets == null ? Map.of() : Map.copyOf(assets); }
+        public Unspent(String ownerAddress) { this(ownerAddress, null, Map.of()); }
     }
 
     /**
@@ -19,6 +24,7 @@ public sealed interface UtxoState {
      * so the payer cannot be read from a live UTXO.
      */
     record Spent(String ownerAddress) implements UtxoState {
+        public Spent() { this(null); }
     }
 
     record Unknown() implements UtxoState {

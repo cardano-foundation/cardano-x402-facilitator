@@ -43,7 +43,11 @@ public final class MasumiDigests {
      */
     static String jcs(Object value) {
         try {
-            return new JsonCanonicalizer(toJson(value)).getEncodedString();
+            // The retained RFC 8785 library accepts only an object or array at its
+            // root. Canonicalize one array element, then remove just its envelope;
+            // this also supports primitive commitment contents such as JCS null.
+            String canonical = new JsonCanonicalizer("[" + toJson(value) + "]").getEncodedString();
+            return canonical.substring(1, canonical.length() - 1);
         } catch (IOException e) {
             throw new IllegalArgumentException("value is not RFC 8785-canonicalizable", e);
         }
@@ -197,6 +201,19 @@ public final class MasumiDigests {
         sb.append('"');
         for (int i = 0; i < s.length(); i++) {
             char c = s.charAt(i);
+            // RFC 8785 rejects invalid Unicode instead of letting UTF-8 encoding
+            // replace lone UTF-16 surrogates. This covers every string value and
+            // object key, including the manifest and reconstructed signed terms.
+            if (Character.isHighSurrogate(c)) {
+                if (i + 1 >= s.length() || !Character.isLowSurrogate(s.charAt(i + 1))) {
+                    throw new IllegalArgumentException("JCS cannot serialize an unpaired surrogate");
+                }
+                sb.append(c).append(s.charAt(++i));
+                continue;
+            }
+            if (Character.isLowSurrogate(c)) {
+                throw new IllegalArgumentException("JCS cannot serialize an unpaired surrogate");
+            }
             switch (c) {
                 case '"' -> sb.append("\\\"");
                 case '\\' -> sb.append("\\\\");

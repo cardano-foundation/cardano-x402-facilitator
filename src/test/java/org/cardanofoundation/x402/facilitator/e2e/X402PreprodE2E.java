@@ -51,7 +51,7 @@ public class X402PreprodE2E {
     static final String FACILITATOR = env("FACILITATOR_URL", "http://localhost:4022");
     static final String NETWORK = env("E2E_NETWORK", "cardano:preprod");
     static final BigInteger AMOUNT = new BigInteger(env("E2E_AMOUNT_LOVELACE", "1500000"));
-    static final String NOT_CONFIRMED = "exact_cardano_settlement_not_confirmed";
+    static final String PENDING = "settlement_pending";
 
     public static void main(String[] args) throws Exception {
         BackendService backend = new BFBackendService(BACKEND_URL, BF_PROJECT);
@@ -64,7 +64,7 @@ public class X402PreprodE2E {
         System.out.println("receiver: " + payTo);
 
         long tip = backend.getBlockService().getLatestBlock().getValue().getSlot();
-        long ttl = tip + 1800;
+        long ttl = tip + 300;
 
         // 1. Build + sign the payment (client pays the fee; facilitator never signs)
         QuickTxBuilder quickTx = new QuickTxBuilder(backend);
@@ -109,7 +109,7 @@ public class X402PreprodE2E {
         JsonNode settle = post(http, om, FACILITATOR + "/settle", body);
         System.out.println("settle:   " + settle);
         boolean settled = settle.path("success").asBoolean();
-        if (!settled && !NOT_CONFIRMED.equals(settle.path("errorReason").asText())) {
+        if (!settled && !PENDING.equals(settle.path("errorReason").asText())) {
             throw new IllegalStateException("settle failed: " + settle); // hard failure, not a timeout
         }
         if (settled) {

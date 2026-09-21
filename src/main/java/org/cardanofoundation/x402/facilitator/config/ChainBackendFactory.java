@@ -10,6 +10,7 @@ import org.cardanofoundation.x402.facilitator.chain.blockfrost.BlockfrostProtoco
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
+import java.time.Clock;
 
 /**
  * Builds one chain-service graph per configured network entry. The only
@@ -41,7 +42,7 @@ public class ChainBackendFactory {
                 ? Duration.ofSeconds(3) : props.settle().pollIntervalOrDefault();
         return new ChainBackend(
                 new BlockfrostChainService(backend, pollInterval, baseUrl,
-                        bf.projectId() == null ? "" : bf.projectId()),
+                        bf.projectId() == null ? "" : bf.projectId(), clock, Clock.systemUTC()),
                 new BlockfrostProtocolParamsProvider(backend),
                 clock);
     }

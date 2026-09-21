@@ -16,13 +16,18 @@ public interface FacilitatorChainService {
     /** Throws ChainLookupException on lookup failure or a stale backing view. */
     UtxoState getUtxoState(String txHashHex, int index);
 
-    /** Throws ChainLookupException when the backing view is stale (fail-closed). */
+    /** Current wall-clock slot in the network's era configuration, not the latest block's slot. */
     long getCurrentSlot();
 
     /** Submits the raw signed tx; returns a classified outcome, never throws. */
     SubmissionResult submitTransaction(byte[] txBytes);
 
-    /** One-shot. Throws ChainLookupException on lookup failure — error is never absence. */
+    /**
+     * One-shot authenticated evidence: Included MUST prove the exact transaction was phase-2
+     * valid and created its outputs. A block appearance alone is insufficient because is_valid
+     * is not covered by the transaction id. Unknown validity fails closed with ChainLookupException.
+     * Throws on lookup failure — error is never absence.
+     */
     InclusionResult checkInclusion(String txHashHex);
 
     /**

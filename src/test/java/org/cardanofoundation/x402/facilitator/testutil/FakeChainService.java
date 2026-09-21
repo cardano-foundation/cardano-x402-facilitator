@@ -61,7 +61,7 @@ public class FakeChainService implements FacilitatorChainService, ProtocolParams
         // `spentOwners` lets a test say "spent, but we know who owned it" — the
         // shape a client-submitted payment's own nonce always has.
         if (owner == null) return new UtxoState.Spent(spentOwners.get(key));
-        return new UtxoState.Unspent(owner);
+        return new UtxoState.Unspent(owner, BigInteger.valueOf(10_000_000), Map.of());
     }
 
     @Override
@@ -93,7 +93,7 @@ public class FakeChainService implements FacilitatorChainService, ProtocolParams
             InclusionResult r = checkInclusion(txHashHex);
             if (r instanceof InclusionResult.Included inc && inc.depth() >= minDepth) return r;
             if (r instanceof InclusionResult.Mempool && minDepth <= MEMPOOL) return r;
-            return new InclusionResult.NotSeen();
+            return r;
         } catch (ChainLookupException e) {
             return new InclusionResult.NotSeen();
         }
@@ -107,6 +107,6 @@ public class FakeChainService implements FacilitatorChainService, ProtocolParams
     @Override
     public ProtocolParams current() {
         if (throwOnParams) throw new ChainLookupException("params down");
-        return new ProtocolParams(coinsPerUtxoByte, maxTxSize);
+        return new ProtocolParams(coinsPerUtxoByte, maxTxSize, BigInteger.valueOf(44), BigInteger.valueOf(155381));
     }
 }

@@ -1,0 +1,22 @@
+# Only send the inputs used by the application Dockerfile to the builder.
+# In particular, exclude local .env files, Git history and generated artifacts.
+**
+!Dockerfile
+!gradlew
+!settings.gradle
+!build.gradle
+!gradle/
+!gradle/**
+!src/
+!src/**
+
+# Keep local overrides and keys excluded even when placed inside an allowed tree.
+**/.env
+**/.env.*
+**/application-local.*
+**/application-secrets.*
+**/*.pem
+**/*.key
+**/*.p12
+**/*.jks
+**/*.keystore

@@ -35,11 +35,13 @@ public final class MasumiDatum {
     }
 
     /**
-     * Address split into its payment credential plus its stake-hash-or-"".
-     * The stake credential's script-ness is intentionally NOT tracked:
-     * {@link #sameCredentials} compares only the stake hash.
+     * Address split into its payment credential and optional stake credential.
+     * Script stake credentials remain distinguishable so unsafe lifecycle forms are rejected.
      */
-    public record MasumiAddressCredentials(MasumiCredential payment, String stakeHash) {
+    public record MasumiAddressCredentials(MasumiCredential payment, String stakeHash, boolean stakeIsScript) {
+        public MasumiAddressCredentials(MasumiCredential payment, String stakeHash) {
+            this(payment, stakeHash, false);
+        }
     }
 
     /** Decoded view of a lock datum used by the facilitator. */
@@ -82,14 +84,15 @@ public final class MasumiDatum {
         String stakeHash = addr.getDelegationCredentialHash()
                 .map(b -> HexUtil.encodeHexString(b).toLowerCase())
                 .orElse("");
-        return new MasumiAddressCredentials(payment, stakeHash);
+        int addressType = (addr.getBytes()[0] & 0xf0) >>> 4;
+        return new MasumiAddressCredentials(payment, stakeHash, addressType == 2 || addressType == 3);
     }
 
     /** True when two addresses share the same payment (and stake, if any) credential. */
     public static boolean sameCredentials(MasumiAddressCredentials a, MasumiAddressCredentials b) {
         if (a.payment().isScript() != b.payment().isScript()) return false;
         if (!a.payment().hash().equals(b.payment().hash())) return false;
-        return a.stakeHash().equals(b.stakeHash());
+        return a.stakeIsScript() == b.stakeIsScript() && a.stakeHash().equals(b.stakeHash());
     }
 
     /**
@@ -172,7 +175,7 @@ public final class MasumiDatum {
         }
         MasumiCredential stake = parseCredential(inline.getData().getPlutusDataList().get(0));
         if (stake == null) return null;
-        return new MasumiAddressCredentials(payment, stake.hash());
+        return new MasumiAddressCredentials(payment, stake.hash(), stake.isScript());
     }
 
     /** Decodes an {@code Option<Address>} field ({@code Some(addr)} / {@code None}). */
@@ -193,7 +196,7 @@ public final class MasumiDatum {
         List<PlutusData> fields = c.getData().getPlutusDataList();
         if (fields.size() != 1) return null;
         String hash = hex(fields.get(0));
-        if (hash == null) return null;
+        if (hash == null || hash.length() != 56) return null;
         return new MasumiCredential(alt == 1, hash);
     }
 
@@ -206,7 +209,7 @@ public final class MasumiDatum {
     }
 
     private static Long constrIndex(PlutusData d) {
-        return d instanceof ConstrPlutusData c ? c.getAlternative() : null;
+        return d instanceof ConstrPlutusData c && c.getData().getPlutusDataList().isEmpty() ? c.getAlternative() : null;
     }
 
     private MasumiDatum() {

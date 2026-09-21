@@ -24,7 +24,32 @@ public record DecodedTransaction(
         int scriptWitnessCount,
         boolean signaturesValid,
         Set<String> verifiedWitnessKeyHashes, // blake2b-224(vkey) hex lowercase
-        int serializedSize) {
+        int serializedSize,
+        BigInteger fee,
+        boolean isValid,
+        Set<Long> bodyKeys,
+        Set<String> requiredSignerKeyHashes,
+        byte[] rawBytes) {
+
+    public DecodedTransaction {
+        inputs = List.copyOf(inputs);
+        outputs = List.copyOf(outputs);
+        verifiedWitnessKeyHashes = Set.copyOf(verifiedWitnessKeyHashes);
+        bodyKeys = Set.copyOf(bodyKeys);
+        requiredSignerKeyHashes = Set.copyOf(requiredSignerKeyHashes);
+        rawBytes = rawBytes == null ? null : rawBytes.clone();
+    }
+    @Override public byte[] rawBytes() { return rawBytes == null ? null : rawBytes.clone(); }
+
+    /** Legacy construction is for structural consumers; missing fee fails fresh phase-1 checks. */
+    public DecodedTransaction(String txHashHex, List<String> inputs, List<Output> outputs,
+                              Long ttlSlot, Long validityStartSlot, Integer networkId,
+                              int vkeyWitnessCount, int scriptWitnessCount, boolean signaturesValid,
+                              Set<String> verifiedWitnessKeyHashes, int serializedSize) {
+        this(txHashHex, inputs, outputs, ttlSlot, validityStartSlot, networkId, vkeyWitnessCount,
+                scriptWitnessCount, signaturesValid, verifiedWitnessKeyHashes, serializedSize,
+                null, true, Set.of(), Set.of(), null);
+    }
 
     public record Output(
             String address,
@@ -37,5 +62,6 @@ public record DecodedTransaction(
             // which must not depend on cardano-client-lib's definite-length
             // re-serialization.
             int inlineDatumRawLen) {
+        public Output { assets = Map.copyOf(assets); }
     }
 }

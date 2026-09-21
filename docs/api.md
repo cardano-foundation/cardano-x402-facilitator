@@ -11,7 +11,8 @@ Set globally in `config/JacksonConfig`, and they apply to every endpoint:
 
 - **`null` fields are omitted** from responses (`NON_NULL` inclusion). A field
   documented as "null when …" is simply absent, not `"field": null`.
-- **Unknown request fields are ignored** rather than rejected.
+- **Unknown envelope fields are ignored**. Confirmation policy and Masumi
+  requirements use closed schemas; unknown fields there are rejected.
 - Parser bounds (defence in depth under the byte cap): max nesting depth 64, max
   string length 200 000, max number length 1 000.
 
@@ -70,7 +71,7 @@ It is read-only with respect to the chain: nothing is submitted.
 | Field | Type | Notes |
 |---|---|---|
 | `x402Version` | int | Must be `2`; anything else fails the registry lookup |
-| `resource` | object | Opaque to the facilitator; echoed by the caller's own bookkeeping |
+| `resource` | object | Resource context; supplied to an optional Masumi registry validator |
 | `accepted` | object | The `paymentRequirements` the payer accepted |
 | `payload.transaction` | string | Base64-encoded CBOR of the **signed** transaction |
 | `payload.nonce` | string | `<txHash>#<index>` of an input the payer controls — the replay anchor |
@@ -83,7 +84,7 @@ It is read-only with respect to the chain: nothing is submitted.
 | `scheme` | string | `exact` |
 | `network` | string | `cardano:mainnet` \| `cardano:preprod` \| `cardano:preview`, or a CIP-34 alias (below) |
 | `asset` | string | `lovelace`, or `<policyIdHex>.<assetNameHex>` for a native asset — **dot-separated**, 56 hex policy id, even-length asset name |
-| `amount` | string | Positive integer, smallest unit |
+| `amount` | string | Canonical positive integer string, smallest unit (no sign or leading zeros) |
 | `payTo` | string | Bech32 recipient address |
 | `maxTimeoutSeconds` | int | Payer-facing TTL budget |
 | `extra` | object | Method selector + per-method fields — see [verification.md](verification.md) |
@@ -119,8 +120,9 @@ transport error — clients must read the body, not just the status.
 
 ## `POST /settle`
 
-Verifies, then submits the transaction and waits for it to reach
-`x402.settle.confirmation-depth` blocks. Request body is identical to `/verify`.
+Verifies, submits once, and waits for `extra.confirmationPolicy.l1Confirmations`
+(default `1`). A retry reconciles the journaled transaction. Request body is
+identical to `/verify`.
 
 ### Response — `200 OK`
 
@@ -131,7 +133,7 @@ Settled:
   "payer": "addr_test1...",
   "transaction": "560c090d4fe4b0d6...",
   "network": "cardano:preprod",
-  "extra": { "status": "confirmed" }
+  "extra": { "status": "confirmed", "transactionId": "560c090d4fe4b0d6...", "confirmations": 3 }
 }
 ```
 
@@ -139,9 +141,10 @@ Failed:
 ```json
 {
   "success": false,
-  "errorReason": "exact_cardano_settlement_not_confirmed",
+  "errorReason": "settlement_pending",
   "transaction": "560c090d4fe4b0d6...",
-  "network": "cardano:preprod"
+  "network": "cardano:preprod",
+  "extra": { "status": "pending", "transactionId": "560c090d4fe4b0d6..." }
 }
 ```
 
@@ -158,16 +161,26 @@ Failed:
 `transaction` and `network` are non-null by contract, so `transaction: ""` —
 not an absent field — is how "never submitted" is expressed.
 
-**`success: false` does not mean the money didn't move.** A
-`exact_cardano_settlement_not_confirmed` carrying a non-empty `transaction` means
-the tx *was* broadcast and confirmation timed out. It may still land. Treat that
-tx hash as authoritative and poll the chain — do not re-submit and do not assume
-failure. The E2E proof does exactly this.
+**`success: false` does not mean the money did not move.** `settlement_pending`
+with a transaction hash means broadcast may have occurred but evidence does not
+meet the requested threshold. Retry the identical payload and requirements. The
+facilitator reconciles that transaction without broadcasting again. Upstream
+`x402ResourceServer` performs one such retry automatically. Terminal rejection
+uses `exact_cardano_settlement_definitively_rejected` and retains its claim.
+
+If current evidence proves absence and the transaction's TTL plus indexing grace
+has elapsed, settlement returns `exact_cardano_settlement_failed` with
+`extra.status: "expired"`. The claim remains reserved; expiry never authorizes
+another broadcast. A lookup failure cannot prove expiry.
+
+`extra.transactionId` echoes the transaction hash. Confirmed responses expose the
+actual observed `extra.confirmations`, not merely the requested minimum.
 
 ### `503 Service Unavailable`
 
-When the chain backend for the requested network is unhealthy, `/settle` refuses
-rather than accepting a payment it cannot confirm:
+For a fresh payment, an unhealthy backend causes a retryable refusal. A
+journaled retry still reaches settlement and returns pending if evidence is
+unavailable:
 
 ```json
 {
@@ -193,12 +206,9 @@ This is retryable.
     "network": "cardano:preprod",
     "extra": {
       "assetTransferMethods": ["default", "masumi", "script"],
-      "settlementLayers": ["l1"],
       "areFeesSponsored": false,
-      "submissionModes": ["server", "client"],
       "l1Confirmations": {
-        "server": { "minimum": 0, "maximum": 20 },
-        "client": { "minimum": 0, "maximum": 20 }
+        "minimum": 0, "maximum": 20
       }
     }
   } ],
@@ -219,10 +229,8 @@ never as unknown.
 | Field | Meaning |
 | --- | --- |
 | `assetTransferMethods` | The `extra.assetTransferMethod` values this facilitator verifies. |
-| `settlementLayers` | `l1` only. Hydra needs head-authenticated evidence this facilitator cannot produce. |
 | `areFeesSponsored` | Always `false`. The client builds and signs the whole transaction and balances the fee against its own inputs. |
-| `submissionModes` | Both are honoured, so a resource server may also quote `either` and let the payer choose. |
-| `l1Confirmations` | Per-mode acceptable range for `extra.confirmationPolicy.l1Confirmations`. |
+| `l1Confirmations` | Acceptable range for `extra.confirmationPolicy.l1Confirmations`. |
 
 The `minimum` is `0` — canonical inclusion — unless `x402.settle.accept-mempool`
 is on, in which case it drops to `-1`. The floor tracks that setting rather than
@@ -289,15 +297,21 @@ Every value below is a stable code returned in `invalidReason` /
 | `invalid_exact_cardano_payload_not_yet_valid` | `validFrom` in the future |
 | `invalid_exact_cardano_payload_ttl_too_far` | TTL further ahead than `maxTimeoutSeconds` allows |
 
-### Submission mode and evidence
+### Policy and ledger validation
 
 | Code | Meaning |
 |---|---|
-| `invalid_exact_cardano_requirements_policy` | `extra` carries a malformed `submissionPolicy` or `confirmationPolicy` |
-| `invalid_exact_cardano_payload_submission_mode_mismatch` | `payload.submissionMode` is not admitted by the declared policy |
-| `invalid_exact_cardano_payload_submission_mode_unsupported` | The selected mode is not one this facilitator can honour |
-| `invalid_exact_cardano_payload_evidence_mismatch` | Client submission claimed, but the chain has no record of the transaction |
-| `invalid_exact_cardano_payload_phase2_invalid` | A client-submitted payment carries script witnesses and could land phase-2 invalid |
+| `invalid_exact_cardano_requirements` | Amount or asset is not in canonical form |
+| `invalid_exact_cardano_requirements_policy` | Malformed confirmation policy |
+| `invalid_exact_cardano_payload_phase1_invalid` | Invalid transaction structure or unsupported advanced ledger operation |
+| `invalid_exact_cardano_payload_phase2_invalid` | Envelope marks script execution invalid |
+| `invalid_exact_cardano_payload_value_not_conserved` | Input value does not equal output value plus fees |
+| `invalid_exact_cardano_payload_fee_below_minimum` | Fee below protocol minimum |
+| `exact_cardano_facilitator_input_value_unavailable` | Provider cannot supply trustworthy input quantities |
+
+Legacy `submissionPolicy`/`submissionMode` metadata does not select a different
+execution path. The facilitator submits every fresh accepted payment. Masumi's
+closed schema rejects removed fields, including `terms.settlementPolicy`.
 
 ### Nonce / replay
 
@@ -324,7 +338,8 @@ Every value below is a stable code returned in `invalidReason` /
 |---|---|
 | `exact_cardano_facilitator_chain_lookup_failed` | Backend unreachable or degraded |
 | `exact_cardano_settlement_failed` | Node rejected the submission |
-| `exact_cardano_settlement_not_confirmed` | Submitted, confirmation timed out — **may still land** |
+| `settlement_pending` | Broadcast may have occurred; retry to reconcile without resubmission |
+| `exact_cardano_settlement_definitively_rejected` | Definitive rejection; claim retained as a terminal tombstone |
 | `duplicate_settlement` | Same payment already claimed |
 
 ### `masumi` method
@@ -339,14 +354,18 @@ Every value below is a stable code returned in `invalidReason` /
 | `invalid_exact_cardano_payload_masumi_collateral` | Collateral outside bounds |
 | `invalid_exact_cardano_payload_masumi_min_utxo` | Post-result output below min-UTxO |
 | `invalid_exact_cardano_payload_masumi_reference_script` | Reference script attached (forbidden) |
-| `invalid_exact_cardano_payload_masumi_asset` | Locked asset set ≠ required set |
+| `invalid_exact_cardano_payload_masumi_asset` | Locked value or asset set differs from the exact requirement |
+| `invalid_exact_cardano_payload_masumi_escrow_output_count` | Transaction must contain exactly one escrow output |
 
 Requirements-level Masumi codes — these reject the **402 itself** as unusable,
 before any transaction is examined:
 
 | Code | Meaning |
 |---|---|
-| `invalid_exact_cardano_requirements_masumi_schema` | `extra` is malformed, or the seller's CIP-8 authorization over `termsDigest` does not verify |
+| `invalid_exact_cardano_requirements_masumi_schema` | `extra` fails the closed bounded schema |
+| `invalid_exact_cardano_requirements_masumi_seller_signature` | Seller CIP-8 authorization over `termsDigest` does not verify |
+| `invalid_exact_cardano_requirements_masumi_deployment` | Explicit deployment lacks independent operator approval |
+| `invalid_exact_cardano_requirements_masumi_agent_identifier` | Registry claim cannot be independently authenticated |
 | `invalid_exact_cardano_requirements_masumi_commitment` | The request commitment does not recompute, or `terms.inputHash` disagrees with it |
 | `invalid_exact_cardano_requirements_masumi_identifier` | `blockchainIdentifier` is unusable or names a different escrow |
 

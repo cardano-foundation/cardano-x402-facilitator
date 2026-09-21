@@ -20,26 +20,25 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class MasumiCoseTest {
 
-    private static final String SELLER = "addr_test1qq4jrrcfzylccwgqu3su865es52jkf7yzrdu9cw3z84nycnn3zz9lvqj7vs95tej896xkekzkufhpuk64ja7pga2g8ksdf8km4";
-    private static final String REFERENCE_KEY = "a401010327200621582020578a9a8283f754d152e41391de5cb8f9d63f8acb5d71e557f974b1173a9a96";
-    private static final String REFERENCE_SIGNATURE = "845846a2012767616464726573735839002b218f09113f8c3900e461c3ea9985152b27c410dbc2e1d111eb32627388845fb012f3205a2f3239746b66c2b71370f2daacbbe0a3aa41eda166686173686564f45820d8275e410352d9277286f660d41536e2efbee5744232e272e606887f8aeb19b75840aa500ea1d094a77c24dbfb0369f6d4da7a13bb8cac8b3d4f36938e0cbaceb2e568135a2d91a0fd6005e2df9d450b80822599a2eed4d7e2f937bea80c350bda0b";
+    private static final String SELLER = "addr_test1vpt780ulj0qpqs72xwftrvkfuztqxgr43zqk3j4m3x4tndg6qr3hs";
+    private static final String REFERENCE_KEY = "a401010327200621582017cb79fb2b4120f2b1ec65e4198d6e08b28e813feb01e4a400839b85e18080ce";
+    private static final String REFERENCE_SIGNATURE = "84582aa201276761646472657373581d6057e3bf9f93c01043ca3392b1b2c9e096032075888168cabb89aab9b5a166686173686564f458203b33aabb96cea60b86f35425717666b5a969584f738a856c0b0d8887c300858958405621924f2a50d0fa1fcc3517500019c16bf4a149c2288f6b813027bd9078dc8df9c36f7509e0d5c418f94e2d8cf79c04e5e8e209fbb1bb3f47bfc186ce167b0a";
     private static final String PAY_TO = "addr_test1wzs4e6wc95hkwezlccjw9mdvq0r0rsgx6zk34avptga3ftgn37w4g";
     /** termsDigest the TypeScript implementation computed for these terms. */
-    private static final String EXPECTED_DIGEST = "d8275e410352d9277286f660d41536e2efbee5744232e272e606887f8aeb19b7";
+    private static final String EXPECTED_DIGEST = "3b33aabb96cea60b86f35425717666b5a969584f738a856c0b0d8887c3008589";
 
     private static Map<String, Object> extra() {
         Map<String, Object> t = new LinkedHashMap<>();
         t.put("version", "1");
         t.put("paymentType", "Web3CardanoV2");
-        t.put("sellerAddress", "addr_test1qq4jrrcfzylccwgqu3su865es52jkf7yzrdu9cw3z84nycnn3zz9lvqj7vs95tej896xkekzkufhpuk64ja7pga2g8ksdf8km4");
-        t.put("sellerNonce", "8d227855900ae6dcf47ee16a17461ab9a6b157a3d964b32ccd52dd038e42bd75");
+        t.put("sellerAddress", "addr_test1vpt780ulj0qpqs72xwftrvkfuztqxgr43zqk3j4m3x4tndg6qr3hs");
+        t.put("sellerNonce", "0000000000000000000000000000000000000000000000000000000000000004");
         t.put("buyerNonce", "");
-        t.put("inputHash", "b44bc52f6995a2009bbb36e662e2b3fc593d2c8154b8e7cf1c1387fdf69b8e15");
-        t.put("payByTime", "1785931662349");
-        t.put("submitResultTime", "1785932262349");
-        t.put("unlockTime", "1785933462349");
-        t.put("externalDisputeUnlockTime", "1785934662349");
-        t.put("settlementPolicy", "l1");
+        t.put("inputHash", "a04e62604bb67a7e1dc06926a0d6d040fd8d60cc28b2cb5fb94afcfff5d7bcea");
+        t.put("payByTime", "1789992600000");
+        t.put("submitResultTime", "1789993800000");
+        t.put("unlockTime", "1789994700000");
+        t.put("externalDisputeUnlockTime", "1789995600000");
         Map<String, Object> e = new LinkedHashMap<>();
         e.put("assetTransferMethod", "masumi");
         e.put("terms", t);
@@ -57,7 +56,7 @@ class MasumiCoseTest {
 
     @Test
     void reconstructsTheSameTermsDigestAsTypeScript() {
-        assertThat(termsDigest(requirements("5000000"))).isEqualTo(EXPECTED_DIGEST);
+        assertThat(termsDigest(requirements("3000000"))).isEqualTo(EXPECTED_DIGEST);
     }
 
     @Test
@@ -89,4 +88,39 @@ class MasumiCoseTest {
         assertThat(MasumiCose.verifySellerTermsSignature(
                 REFERENCE_KEY, "deadbeef", EXPECTED_DIGEST, SELLER)).isFalse();
     }
+    @Test void rejectsWrongCurveEvenWhenTheSignatureIsValid() {
+        String wrongCurve = REFERENCE_KEY.replace("2006", "2007");
+        assertThat(MasumiCose.verifySellerTermsSignature(
+                wrongCurve, REFERENCE_SIGNATURE, EXPECTED_DIGEST, SELLER)).isFalse();
+    }
+
+    @Test void rejectsCryptographicallyValidSignaturesWithWrongProtectedHeaders() {
+        var seller = new org.cardanofoundation.x402.facilitator.testutil.MasumiTestSeller("77");
+        byte[] address = new com.bloxbean.cardano.client.address.Address(seller.sellerAddress).getBytes();
+        for (var header : java.util.List.of(
+                new com.bloxbean.cardano.client.cip.cip8.HeaderMap().algorithmId(-7L).addOtherHeader("address", address),
+                new com.bloxbean.cardano.client.cip.cip8.HeaderMap().algorithmId(-8L),
+                new com.bloxbean.cardano.client.cip.cip8.HeaderMap().algorithmId(-8L).addOtherHeader("address", new byte[29]))) {
+            assertThat(MasumiCose.verifySellerTermsSignature(seller.referenceKeyHex(),
+                    seller.signTermsHex(EXPECTED_DIGEST, header), EXPECTED_DIGEST, seller.sellerAddress)).isFalse();
+        }
+    }
+
+    @Test void requiresMatchingKeyIdentifiersWhenBothArePresent() {
+        var seller = new org.cardanofoundation.x402.facilitator.testutil.MasumiTestSeller("77");
+        var key = com.bloxbean.cardano.client.cip.cip8.COSEKey.deserialize(
+                com.bloxbean.cardano.client.common.cbor.CborSerializationUtil.deserialize(
+                        com.bloxbean.cardano.client.util.HexUtil.decodeHexString(seller.referenceKeyHex())));
+        key.keyId(new byte[] {1});
+        String keyHex = com.bloxbean.cardano.client.util.HexUtil.encodeHexString(key.serializeAsBytes());
+        var header = new com.bloxbean.cardano.client.cip.cip8.HeaderMap().algorithmId(-8L)
+                .addOtherHeader("address", new com.bloxbean.cardano.client.address.Address(seller.sellerAddress).getBytes())
+                .keyId(new byte[] {2});
+        assertThat(MasumiCose.verifySellerTermsSignature(keyHex, seller.signTermsHex(EXPECTED_DIGEST, header),
+                EXPECTED_DIGEST, seller.sellerAddress)).isFalse();
+        header.keyId(new byte[] {1});
+        assertThat(MasumiCose.verifySellerTermsSignature(keyHex, seller.signTermsHex(EXPECTED_DIGEST, header),
+                EXPECTED_DIGEST, seller.sellerAddress)).isTrue();
+    }
+
 }

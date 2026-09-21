@@ -38,6 +38,8 @@ services:
 
   # ---- light profile: blockfrost (or yaci-store against a public relay) --------
   facilitator:
+    # aiken-java-binding 0.1.0 bundles Linux x86-64, but not Linux ARM64.
+    platform: linux/amd64
     build:
       context: ..
       dockerfile: Dockerfile
@@ -157,6 +159,7 @@ services:
     restart: unless-stopped
 
   facilitator-node:
+    platform: linux/amd64
     build:
       context: ..
       dockerfile: Dockerfile
@@ -217,6 +220,7 @@ services:
     restart: unless-stopped
 
   facilitator-yano:
+    platform: linux/amd64
     build:
       context: ..
       dockerfile: Dockerfile

@@ -33,12 +33,10 @@ class X402FacilitatorRegistryTest {
         // its selected policies against, so assert them rather than echo them.
         Map<String, Object> expectedExtra = new LinkedHashMap<>();
         expectedExtra.put("assetTransferMethods", List.of("default", "masumi", "script"));
-        expectedExtra.put("settlementLayers", List.of("l1"));
         expectedExtra.put("areFeesSponsored", false);
-        expectedExtra.put("submissionModes", List.of("server", "client"));
-        // No mempool opt-in, so the floor is canonical inclusion for both modes.
+        // Upstream reads a single range directly from extra.l1Confirmations.
         Map<String, Object> range = Map.of("minimum", 0, "maximum", 20);
-        expectedExtra.put("l1Confirmations", Map.of("server", range, "client", range));
+        expectedExtra.put("l1Confirmations", range);
         assertThat(s.kinds())
                 .containsExactly(new SupportedKind(2, "exact", "cardano:preprod", expectedExtra));
         assertThat(s.extensions()).isEmpty();
@@ -51,8 +49,8 @@ class X402FacilitatorRegistryTest {
         X402FacilitatorRegistry reg = new X402FacilitatorRegistry(true);
         reg.register("cardano:preprod", exact);
         Map<?, ?> extra = (Map<?, ?>) reg.supported().kinds().get(0).extra();
-        Map<?, ?> ranges = (Map<?, ?>) extra.get("l1Confirmations");
-        assertThat(((Map<?, ?>) ranges.get("server")).get("minimum")).isEqualTo(-1);
-        assertThat(((Map<?, ?>) ranges.get("client")).get("minimum")).isEqualTo(-1);
+        Map<?, ?> range = (Map<?, ?>) extra.get("l1Confirmations");
+        assertThat(range.get("minimum")).isEqualTo(-1);
+        assertThat(range.get("maximum")).isEqualTo(20);
     }
 }

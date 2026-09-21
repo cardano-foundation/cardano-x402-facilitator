@@ -49,10 +49,10 @@ public final class TestTx {
     public static final String MASUMI_REFERENCE_KEY = "a1b2c3d4";
     public static final String MASUMI_REFERENCE_SIGNATURE =
             "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"; // 32 bytes
-    public static final String MASUMI_SELLER_NONCE = "8877665544332211";
+    public static final String MASUMI_SELLER_NONCE = "8877665544332211".repeat(4);
     public static final String MASUMI_IDENTIFIER_FROM_PURCHASER = "1122334455667788";
-    public static final String MASUMI_AGENT_IDENTIFIER = "deadbeefdeadbeefdeadbeefdeadbeef";
-    public static final String MASUMI_INPUT_HASH = "";
+    public static final String MASUMI_AGENT_IDENTIFIER = "";
+    public static final String MASUMI_INPUT_HASH = "5d39e9ff510263d9a46ed607188dba48bc458fa7012ae9161205eb577ad3254b";
     public static final BigInteger MASUMI_COLLATERAL_RETURN_LOVELACE = BigInteger.ZERO;
     public static final BigInteger MASUMI_PAY_BY_TIME = new BigInteger("2000000000000");
     public static final BigInteger MASUMI_SUBMIT_RESULT_TIME = new BigInteger("2000000600000");
@@ -121,10 +121,10 @@ public final class TestTx {
                     .value(Value.builder().coin(spec.amount()).build()).build();
             TransactionOutput change = TransactionOutput.builder()
                     .address(PAYER_ADDRESS)
-                    .value(Value.builder().coin(BigInteger.valueOf(7_000_000L)).build()).build();
+                    .value(Value.builder().coin(BigInteger.valueOf(9_800_000L).subtract(spec.amount())).build()).build();
             TransactionBody.TransactionBodyBuilder body = TransactionBody.builder()
                     .inputs(inputs).outputs(List.of(payment, change))
-                    .fee(BigInteger.valueOf(170_000L));
+                    .fee(BigInteger.valueOf(200_000L));
             if (spec.ttl() != null) body.ttl(spec.ttl());
             if (spec.validityStart() != null) body.validityStartInterval(spec.validityStart());
             if (spec.networkId() != null) body.networkId(spec.networkId());
@@ -372,10 +372,10 @@ public final class TestTx {
             }
             TransactionOutput change = TransactionOutput.builder()
                     .address(PAYER_ADDRESS)
-                    .value(Value.builder().coin(BigInteger.valueOf(7_000_000L)).build()).build();
+                    .value(Value.builder().coin(BigInteger.valueOf(9_800_000L).subtract(spec.amount())).build()).build();
             TransactionBody.TransactionBodyBuilder body = TransactionBody.builder()
                     .inputs(inputs).outputs(List.of(payment, change))
-                    .fee(BigInteger.valueOf(170_000L));
+                    .fee(BigInteger.valueOf(200_000L));
             if (ttlSlot != null) body.ttl(ttlSlot);
             Transaction tx = Transaction.builder().body(body.build())
                     .witnessSet(new TransactionWitnessSet()).build();
@@ -401,10 +401,10 @@ public final class TestTx {
             if (datumHash != null) payment.setDatumHash(datumHash);
             TransactionOutput change = TransactionOutput.builder()
                     .address(PAYER_ADDRESS)
-                    .value(Value.builder().coin(BigInteger.valueOf(7_000_000L)).build()).build();
+                    .value(Value.builder().coin(BigInteger.valueOf(9_800_000L).subtract(amount)).build()).build();
             TransactionBody body = TransactionBody.builder()
                     .inputs(inputs).outputs(List.of(payment, change))
-                    .fee(BigInteger.valueOf(170_000L))
+                    .fee(BigInteger.valueOf(200_000L))
                     .ttl(1_000_000L)
                     .build();
             Transaction tx = Transaction.builder().body(body)

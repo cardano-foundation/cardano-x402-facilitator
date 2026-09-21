@@ -1,168 +1,106 @@
 package org.cardanofoundation.x402.facilitator.service.verification.method.masumi;
 
+import co.nstant.in.cbor.CborDecoder;
+import co.nstant.in.cbor.CborEncoder;
+import co.nstant.in.cbor.model.Array;
+import co.nstant.in.cbor.model.ByteString;
+import co.nstant.in.cbor.model.DataItem;
+import co.nstant.in.cbor.model.NegativeInteger;
+import co.nstant.in.cbor.model.SimpleValue;
+import co.nstant.in.cbor.model.UnicodeString;
+import co.nstant.in.cbor.model.UnsignedInteger;
+import com.bloxbean.cardano.client.address.Address;
 import com.bloxbean.cardano.client.crypto.Blake2bUtil;
-import com.bloxbean.cardano.client.cip.cip8.COSEKey;
-import com.bloxbean.cardano.client.cip.cip8.COSESign1;
-import com.bloxbean.cardano.client.util.HexUtil;
 import com.bloxbean.cardano.client.crypto.api.impl.EdDSASigningProvider;
+import com.bloxbean.cardano.client.util.HexUtil;
 
+import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.Arrays;
 import java.util.Optional;
 
-/**
- * Verifies the seller's CIP-8 authorization over {@code termsDigest}.
- *
- * <p>This replaces a structural byte-comparison of the declared
- * {@code referenceKey}/{@code referenceSignature} against the datum. Comparing
- * bytes only proves the datum repeats what the requirements claimed — both
- * sides of which the resource server controls. It proves nothing about the
- * seller having agreed to anything. Verifying the COSE_Sign1 proves the holder
- * of the seller address's payment key signed <em>these</em> terms.
- *
- * <p>Three things must hold together, and the address binding is the one that
- * makes the other two mean something:
- * <ul>
- *   <li>the COSE_Key is {@code kty=OKP}, {@code alg=EdDSA}, {@code crv=Ed25519}
- *       with a 32-byte public key and no private material;</li>
- *   <li>the signed payload is exactly the 32-byte {@code termsDigest}, with
- *       {@code hashed=false} — a hashed payload would let a signature over
- *       something else be replayed as one over the digest;</li>
- *   <li>{@code Blake2b-224(publicKey)} equals the seller address's payment
- *       credential, tying the signature to the <em>address</em> that gets paid
- *       rather than to any key that happens to sign.</li>
- * </ul>
- *
- * <p>Mirrors {@code cose.ts} in the TypeScript reference implementation.
- */
+/** Strict CIP-8 authorization over the exact seller terms, including protected address and key identity. */
 public final class MasumiCose {
-
-    private MasumiCose() {
-    }
-
-    /**
-     * Verifies a seller authorization over a terms digest.
-     *
-     * @param referenceKeyHex CBOR COSE_Key hex from {@code extra.referenceKey}.
-     * @param referenceSignatureHex CBOR COSE_Sign1 hex from {@code extra.referenceSignature}.
-     * @param termsDigestHex the 32-byte digest the seller must have signed.
-     * @param sellerAddressBech32 the seller address the signature must bind to.
-     * @return true when the signature is a valid seller authorization over the digest.
-     */
-    public static boolean verifySellerTermsSignature(String referenceKeyHex,
-                                                     String referenceSignatureHex,
-                                                     String termsDigestHex,
-                                                     String sellerAddressBech32) {
-        try {
-            byte[] publicKey = publicKeyFromCoseKey(referenceKeyHex).orElse(null);
-            if (publicKey == null) return false;
-
-            COSESign1 sign1 = COSESign1.deserialize(
-                    com.bloxbean.cardano.client.common.cbor.CborSerializationUtil.deserialize(
-                            HexUtil.decodeHexString(referenceSignatureHex)));
-
-            // The payload must be the digest itself, not a hash of it.
-            byte[] payload = sign1.payload();
-            byte[] expected = HexUtil.decodeHexString(termsDigestHex);
-            if (payload == null || !MessageDigest.isEqual(payload, expected)) return false;
-            if (isHashedPayload(sign1)) return false;
-
-            // Address binding: the signing key must control the seller address.
-            // A script payment credential can never be a signer, so reject it
-            // rather than compare a key hash against a script hash.
-            MasumiDatum.MasumiAddressCredentials seller =
-                    MasumiDatum.addressCredentials(sellerAddressBech32);
-            if (seller == null || seller.payment().isScript()) return false;
-            String keyHash = HexUtil.encodeHexString(Blake2bUtil.blake2bHash224(publicKey)).toLowerCase();
-            if (!keyHash.equals(seller.payment().hash().toLowerCase())) return false;
-
-            // Ed25519 over the COSE Sig_structure.
-            byte[] sigStructure = sign1.signedData().serializeAsBytes();
-            return ed25519Verify(publicKey, sigStructure, sign1.signature());
-        } catch (Exception e) {
-            // A malformed COSE object is an invalid authorization, not a crash.
-            return false;
-        }
-    }
-
-    /**
-     * Extracts and structurally validates the COSE_Key public key.
-     *
-     * @param referenceKeyHex CBOR COSE_Key hex.
-     * @return the 32-byte Ed25519 public key, or empty when the key is unusable.
-     */
-    static Optional<byte[]> publicKeyFromCoseKey(String referenceKeyHex) {
-        try {
-            COSEKey key = COSEKey.deserialize(
-                    com.bloxbean.cardano.client.common.cbor.CborSerializationUtil.deserialize(
-                            HexUtil.decodeHexString(referenceKeyHex)));
-            // kty = OKP (1), alg = EdDSA (-8), crv = Ed25519 (6).
-            if (!isOkp(key) || !isEdDsa(key)) return Optional.empty();
-            // COSE labels are negative integers, not strings: -2 is the OKP `x`
-            // coordinate (the public key) and -4 is `d` (private material).
-            byte[] pub = key.otherHeaderAsBytes(-2L);
-            if (pub == null || pub.length != 32) return Optional.empty();
-            // A published reference key must not carry private material.
-            if (key.otherHeaderAsBytes(-4L) != null) return Optional.empty();
-            return Optional.of(pub);
-        } catch (Exception e) {
-            return Optional.empty();
-        }
-    }
-
-    private static boolean isOkp(COSEKey key) {
-        Object kty = key.keyType();
-        return kty != null && ("1".equals(String.valueOf(kty)) || "OKP".equals(String.valueOf(kty)));
-    }
-
-    private static boolean isEdDsa(COSEKey key) {
-        Object alg = key.algorithmId();
-        return alg != null && ("-8".equals(String.valueOf(alg)) || "EdDSA".equals(String.valueOf(alg)));
-    }
-
-    /**
-     * True when the unprotected header declares a hashed payload. CIP-8 signData
-     * sets {@code hashed=false}; a hashed payload would mean the signature covers
-     * a hash of something else, which could then be replayed as a signature over
-     * the digest itself. Absent is treated as hashed, i.e. rejected.
-     */
-    private static boolean isHashedPayload(COSESign1 sign1) {
-        try {
-            var headers = sign1.headers().unprotected().otherHeaders();
-            Object hashed = null;
-            for (var e : headers.entrySet()) {
-                if ("hashed".equals(String.valueOf(e.getKey()))) {
-                    hashed = e.getValue();
-                    break;
-                }
-            }
-            if (hashed == null) return true;
-            String rendered = String.valueOf(hashed);
-            return !("false".equalsIgnoreCase(rendered) || rendered.contains("FALSE"));
-        } catch (Exception e) {
-            return true;
-        }
-    }
-
-    /** Same Ed25519 primitive the transaction decoder uses for vkey witnesses. */
     private static final EdDSASigningProvider ED25519 = new EdDSASigningProvider();
+    private MasumiCose() { }
 
-    private static boolean ed25519Verify(byte[] publicKey, byte[] message, byte[] signature) {
+    public static boolean verifySellerTermsSignature(String referenceKeyHex, String referenceSignatureHex,
+                                                     String termsDigestHex, String sellerAddressBech32) {
         try {
-            return ED25519.verify(signature, message, publicKey);
+            var key = keyMap(referenceKeyHex);
+            byte[] publicKey = validatedPublicKey(key);
+            if (publicKey == null) return false;
+            DataItem decoded = decodeOne(HexUtil.decodeHexString(referenceSignatureHex));
+            if (!(decoded instanceof Array array) || array.getDataItems().size() != 4) return false;
+            var fields = array.getDataItems();
+            byte[] protectedBytes = bytes(fields.get(0));
+            if (protectedBytes == null) return false;
+            if (!(decodeOne(protectedBytes) instanceof co.nstant.in.cbor.model.Map headers)
+                    || !(fields.get(1) instanceof co.nstant.in.cbor.model.Map unprotected)) return false;
+            if (!new NegativeInteger(-8).equals(headers.get(label(1)))) return false;
+            if (!SimpleValue.FALSE.equals(unprotected.get(new UnicodeString("hashed")))) return false;
+            byte[] protectedAddress = bytes(headers.get(new UnicodeString("address")));
+            if (protectedAddress == null || !Arrays.equals(protectedAddress, new Address(sellerAddressBech32).getBytes())) return false;
+
+            DataItem keyKid = key.get(label(2));
+            DataItem signatureKid = headers.get(label(4));
+            if (keyKid != null && bytes(keyKid) == null || signatureKid != null && bytes(signatureKid) == null) return false;
+            if (keyKid != null && signatureKid != null && !Arrays.equals(bytes(keyKid), bytes(signatureKid))) return false;
+
+            byte[] expected = HexUtil.decodeHexString(termsDigestHex);
+            byte[] payload = bytes(fields.get(2));
+            byte[] signature = bytes(fields.get(3));
+            if (expected.length != 32 || payload == null || !MessageDigest.isEqual(expected, payload)
+                    || signature == null || signature.length != 64) return false;
+            var seller = MasumiDatum.addressCredentials(sellerAddressBech32);
+            if (seller.payment().isScript()) return false;
+            String hash = HexUtil.encodeHexString(Blake2bUtil.blake2bHash224(publicKey));
+            if (!hash.equals(seller.payment().hash())) return false;
+
+            // Preserve the exact protected-header bytes signed by the wallet.
+            Array sigStructure = new Array().add(new UnicodeString("Signature1"))
+                    .add(new ByteString(protectedBytes)).add(new ByteString(new byte[0])).add(new ByteString(payload));
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            new CborEncoder(out).encode(sigStructure);
+            return ED25519.verify(signature, out.toByteArray(), publicKey);
         } catch (Exception e) {
             return false;
         }
     }
 
-    /** Utility for tests and diagnostics: UTF-8 bytes of a string. */
-    static byte[] utf8(String s) {
-        return s.getBytes(StandardCharsets.UTF_8);
+    static Optional<byte[]> publicKeyFromCoseKey(String referenceKeyHex) {
+        try { return Optional.ofNullable(validatedPublicKey(keyMap(referenceKeyHex))); }
+        catch (Exception e) { return Optional.empty(); }
     }
 
-    /** Utility: constant-time-ish comparison used by callers that need it. */
-    static boolean bytesEqual(byte[] a, byte[] b) {
-        return Arrays.equals(a, b);
+    private static co.nstant.in.cbor.model.Map keyMap(String hex) throws Exception {
+        DataItem decoded = decodeOne(HexUtil.decodeHexString(hex));
+        return decoded instanceof co.nstant.in.cbor.model.Map map ? map : null;
     }
+
+    private static byte[] validatedPublicKey(co.nstant.in.cbor.model.Map key) {
+        if (key == null || !new UnsignedInteger(1).equals(key.get(label(1)))
+                || !new NegativeInteger(-8).equals(key.get(label(3)))
+                || !new UnsignedInteger(6).equals(key.get(label(-1)))
+                || key.getKeys().contains(label(-4))) return null;
+        byte[] pub = bytes(key.get(label(-2)));
+        return pub != null && pub.length == 32 ? pub : null;
+    }
+
+    private static DataItem decodeOne(byte[] bytes) throws Exception {
+        var items = CborDecoder.decode(bytes);
+        return items.size() == 1 ? items.get(0) : null;
+    }
+
+    private static DataItem label(long value) {
+        return value < 0 ? new NegativeInteger(value) : new UnsignedInteger(value);
+    }
+
+    private static byte[] bytes(DataItem value) {
+        return value instanceof ByteString b ? b.getBytes() : null;
+    }
+
+    static byte[] utf8(String s) { return s.getBytes(StandardCharsets.UTF_8); }
+    static boolean bytesEqual(byte[] a, byte[] b) { return Arrays.equals(a, b); }
 }

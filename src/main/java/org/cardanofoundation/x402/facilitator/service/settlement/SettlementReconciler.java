@@ -4,7 +4,6 @@ import org.cardanofoundation.x402.facilitator.chain.ChainLookupException;
 import org.cardanofoundation.x402.facilitator.chain.FacilitatorChainService;
 import org.cardanofoundation.x402.facilitator.model.entity.SettlementRecord;
 import org.cardanofoundation.x402.facilitator.model.entity.SettlementRecord.Status;
-import org.cardanofoundation.x402.facilitator.model.protocol.ProtocolJson;
 import org.cardanofoundation.x402.facilitator.model.protocol.SettleResponse;
 import org.cardanofoundation.x402.facilitator.model.chain.InclusionResult;
 import org.cardanofoundation.x402.facilitator.repository.SettlementRepository;
@@ -22,11 +21,9 @@ import java.time.Instant;
 import java.util.Map;
 
 /**
- * Reconciler: sweeps SUBMITTING/SUBMITTED/NOT_CONFIRMED rows — promote at
- * depth, EXPIRE past the tx TTL (+margin) or, for TTL-less rows, past the
- * reconcile horizon — and re-checks recent CONFIRMED rows, demoting on
- * rollback. Lookup errors preserve state (error is never absence). Runs under
- * a Postgres advisory lock so only one instance sweeps at a time.
+ * Reconciles against each verified selected policy. Legacy policy remains unknown until a
+ * verified retry; no age horizon or provider outage authorizes expiry or resubmission.
+ * PostgreSQL advisory locks serialize sweeps while row and policy fencing handles request races.
  */
 @Log4j2
 @RequiredArgsConstructor
@@ -87,45 +84,39 @@ public class SettlementReconciler {
         } catch (ChainLookupException e) {
             return; // preserve state; next sweep retries
         }
-        boolean includedAtDepth = inc instanceof InclusionResult.Included included
-                && included.depth() >= confirmationDepth;
-
-        if (rec.status() == Status.CONFIRMED) {
-            if (!includedAtDepth) {
-                // rollback: fenced demotion back to SUBMITTED; a later sweep re-resolves
-                repo.casTransition(rec.txHash(), rec.attemptId(), Status.CONFIRMED, Status.SUBMITTED,
-                        Map.of());
-                log.warn("rollback detected: demoted {} from CONFIRMED", rec.txHash());
-            }
-            return;
-        }
+        Integer selected = rec.selectedConfirmations();
+        boolean includedAtDepth = selected != null && inc instanceof InclusionResult.Included included
+                && included.depth() >= Math.max(0, selected);
 
         if (includedAtDepth) {
+            if (rec.status() == Status.CONFIRMED) return; // do not extend the stability window each sweep
             InclusionResult.Included included = (InclusionResult.Included) inc;
-            SettleResponse ok = SettleResponse.ok(rec.txHash(), rec.network(), rec.payer(), "confirmed");
-            repo.casTransition(rec.txHash(), rec.attemptId(), rec.status(), Status.CONFIRMED, Map.of(
-                    "confirmed_at", clock.instant(),
-                    "confirmed_slot", included.slot(),
-                    "confirmed_block", included.blockHash(),
-                    "response_json", toJson(ok)));
+            SettleResponse ok = SettleResponse.confirmed(rec.txHash(), rec.network(), rec.payer(), included.depth());
+            repo.recordObservation(rec, Status.CONFIRMED, Map.of(
+                    "confirmed_at", clock.instant(), "confirmed_slot", included.slot(),
+                    "confirmed_block", included.blockHash(), "response_json", SettlementService.json(ok)));
             return;
         }
-
-        // not included: can it provably never land?
-        if (rec.txTtlSlot() != null) {
-            long currentSlot;
-            try {
-                currentSlot = chain.getCurrentSlot();
-            } catch (ChainLookupException e) {
-                return;
-            }
-            if (currentSlot > rec.txTtlSlot() + TTL_SAFETY_MARGIN_SLOTS) {
-                repo.casTransition(rec.txHash(), rec.attemptId(), rec.status(), Status.EXPIRED, Map.of());
-            }
-        } else if (rec.claimedAt().isBefore(clock.instant().minus(reconcileHorizon))) {
-            // TTL-less: nothing ever proves it dead — horizon-expire, with the
-            // settlement path's EXPIRED-branch re-check as the safety net
-            repo.casTransition(rec.txHash(), rec.attemptId(), rec.status(), Status.EXPIRED, Map.of());
+        if (rec.status() == Status.CONFIRMED && selected != null) {
+            repo.recordObservation(rec, Status.SUBMITTED, Map.of());
+            return;
+        }
+        if (inc instanceof InclusionResult.Included included) {
+            // Included below depth, or V1 policy still unknown: record evidence, never expire/promote.
+            repo.recordObservation(rec, rec.status(), Map.of(
+                    "confirmed_slot", included.slot(), "confirmed_block", included.blockHash()));
+            return;
+        }
+        // Mempool observations are not absence. Neither age nor missing TTL proves a transaction dead.
+        if (!(inc instanceof InclusionResult.NotSeen) || rec.txTtlSlot() == null) return;
+        long currentSlot;
+        try {
+            currentSlot = chain.getCurrentSlot();
+        } catch (ChainLookupException e) {
+            return;
+        }
+        if (currentSlot > rec.txTtlSlot() && currentSlot - rec.txTtlSlot() > TTL_SAFETY_MARGIN_SLOTS) {
+            repo.recordObservation(rec, Status.EXPIRED, Map.of());
         }
     }
 
@@ -144,11 +135,4 @@ public class SettlementReconciler {
         }
     }
 
-    private static String toJson(SettleResponse response) {
-        try {
-            return ProtocolJson.mapper().writeValueAsString(response);
-        } catch (Exception e) {
-            return null;
-        }
-    }
 }

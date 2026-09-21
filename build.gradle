@@ -55,6 +55,13 @@ dependencies {
 
 tasks.named('test') { useJUnitPlatform() }
 
+tasks.register('interop', JavaExec) {
+    group = 'verification'
+    description = 'Checks the real Java HTTP endpoints using @x402/cardano and @x402/core 2.26.0 (offline chain)'
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'org.cardanofoundation.x402.facilitator.interop.TypeScriptInterop'
+}
+
 tasks.register('e2e', JavaExec) {
     group = 'verification'
     description = 'Runs the preprod end-to-end proof (X402PreprodE2E main class)'
