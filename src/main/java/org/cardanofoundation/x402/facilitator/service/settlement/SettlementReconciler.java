@@ -7,6 +7,7 @@ import org.cardanofoundation.x402.facilitator.model.entity.SettlementRecord.Stat
 import org.cardanofoundation.x402.facilitator.model.protocol.SettleResponse;
 import org.cardanofoundation.x402.facilitator.model.chain.InclusionResult;
 import org.cardanofoundation.x402.facilitator.repository.SettlementRepository;
+import org.cardanofoundation.x402.facilitator.repository.SettlementRepository.ReconcileCursor;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.log4j.Log4j2;
 
@@ -18,6 +19,7 @@ import java.sql.Statement;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -41,13 +43,17 @@ public class SettlementReconciler {
     private final Clock clock;
     private final boolean postgres;
 
+    // Each instance resumes its own successful sweeps; lock contention never resets progress.
+    // Restarting an instance restarts its scan. No journal state or expiry policy is changed.
+    private ReconcileCursor cursor;
+
     /**
      * Advisory locks are SESSION-scoped: the lock must be taken and released on
      * one dedicated connection held open for the whole sweep — per-query pooled
      * connections would drop it immediately.
      */
     @org.springframework.scheduling.annotation.Scheduled(fixedDelayString = "PT30S", initialDelayString = "PT30S")
-    public void sweep() {
+    public synchronized void sweep() {
         if (!postgres) {
             doSweep();
             return;
@@ -66,11 +72,19 @@ public class SettlementReconciler {
 
     private void doSweep() {
         Instant confirmedAfter = clock.instant().minus(stabilityWindow);
-        for (SettlementRecord rec : repo.dueForReconcile(confirmedAfter, 200)) {
+        List<SettlementRecord> batch = repo.dueForReconcile(confirmedAfter, 200, cursor);
+        if (batch.isEmpty() && cursor != null) {
+            cursor = null;
+            batch = repo.dueForReconcile(confirmedAfter, 200, null);
+        }
+        for (SettlementRecord rec : batch) {
             try {
                 reconcile(rec);
             } catch (RuntimeException e) {
                 log.warn("reconcile skipped for {}: {}", rec.txHash(), e.getMessage());
+            } finally {
+                // Unknown state, absent providers and failed observations must not block later rows.
+                cursor = ReconcileCursor.after(rec);
             }
         }
     }

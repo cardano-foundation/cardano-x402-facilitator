@@ -82,7 +82,9 @@ public class FacilitatorConfig {
                                                                        ChainBackendFactory factory) {
         Map<String, ChainBackendFactory.ChainBackend> backends = new LinkedHashMap<>();
         for (X402Properties.NetworkEntry entry : props.networks()) {
-            backends.put(entry.id(), factory.build(entry, props));
+            String network = CardanoNetworks.normalize(entry.id());
+            if (backends.containsKey(network)) throw new IllegalStateException("Duplicate canonical network: " + network);
+            backends.put(network, factory.build(entry, props));
         }
         return backends;
     }
@@ -102,7 +104,7 @@ public class FacilitatorConfig {
         // accept-mempool switch that settle() enforces.
         X402FacilitatorRegistry registry = new X402FacilitatorRegistry(settleConfig.acceptMempool());
         for (X402Properties.NetworkEntry entry : props.networks()) {
-            ChainBackendFactory.ChainBackend backend = chainBackends.get(entry.id());
+            ChainBackendFactory.ChainBackend backend = chainBackends.get(CardanoNetworks.normalize(entry.id()));
             ExactCardanoScheme scheme = new ExactCardanoScheme(
                     backend.chainService(), backend.paramsProvider(), decoder, methodVerifiers, maxTxBytes,
                     backend.networkClock(), phase1Validator.getIfAvailable());

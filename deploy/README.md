@@ -23,7 +23,7 @@ facilitator does not embed an indexer either way.
 
 ## Compose profiles
 
-`deploy/docker-compose.yml` defines two profiles:
+`deploy/docker-compose.yml` defines three profiles:
 
 - **light** — `postgres` + `facilitator` (hosted Blockfrost by default). To
   point it at a standalone yaci-store instead, set `BLOCKFROST_BASE_URL` to its
@@ -46,11 +46,11 @@ Key environment variables (all have defaults):
 | Var | Default | Used by |
 |---|---|---|
 | `DB_PASSWORD`, `DB_PORT` | `facilitator`, `5432` | postgres |
-| `BLOCKFROST_BASE_URL` | hosted Blockfrost preprod (light) / yaci-store URL (full, hardcoded) | facilitator |
+| `BLOCKFROST_BASE_URL` | hosted Blockfrost for `CARDANO_NETWORK` (light) / yaci-store URL (full, hardcoded) | facilitator |
 | `BLOCKFROST_PROJECT_ID` | — | facilitator — required for hosted Blockfrost, ignored by yaci-store |
-| `CARDANO_NETWORK` | `preprod` | mithril-sync, cardano-node, facilitator-node |
+| `CARDANO_NETWORK` | `preprod` | all profiles: canonical facilitator ID, hosted URL, node, indexer magic and Yano |
 | `CARDANO_NODE_VERSION` | `10.4.1` | cardano-node image tag |
-| `YACI_PROTOCOL_MAGIC` | `1` (preprod) | yaci-store sync (`764824073` mainnet, `2` preview) |
+| `SYNC_START_SLOT`, `SYNC_START_BLOCKHASH` | preprod checkpoint; origin on mainnet/preview | Optional matching checkpoint for yaci-store |
 | `MITHRIL_SYNC` | `true` | mithril-sync (set `false` to skip snapshot restore) |
 
 The app image ([Dockerfile](../Dockerfile)) uses a glibc Temurin JRE and
@@ -151,3 +151,38 @@ service itself — see that service's block in `deploy/docker-compose.yml`.
       `Spent` — a stale yaci-store can reject honest payments as replays.
 - [ ] Rotate the Blockfrost project id / any credentials out of source and into
       secrets management.
+
+## Consistent network selection
+
+Set `CARDANO_NETWORK` to `preprod`, `preview` or `mainnet` for any Compose profile.
+Compose derives `X402_NETWORK_ID=cardano:<network>` for each facilitator and selects
+the corresponding hosted Blockfrost URL unless `BLOCKFROST_BASE_URL` is overridden.
+The full profile loads matching indexer magic from `networks/<network>.env`;
+`YACI_PROTOCOL_MAGIC` is no longer an independent selector. Preprod retains its
+existing checkpoint; mainnet/preview start from origin unless you provide both
+`SYNC_START_SLOT` and `SYNC_START_BLOCKHASH` for that network.
+[Yaci Store's start logic](https://github.com/bloxbean/yaci-store/blob/main/components/core/src/main/java/com/bloxbean/cardano/yaci/store/core/service/StartService.java)
+uses origin when slot is zero or the checkpoint hash is absent. Origin indexing may
+require a full-history node; choose an available matching checkpoint when using a
+pruned snapshot. No network synchronization was performed by the regression test.
+
+Yano's network and default profile follow `CARDANO_NETWORK`; `YANO_NETWORK` is no
+longer an independent selector. If overriding `YANO_PROFILE` for additional features,
+keep its network profile consistent. Custom backend URL overrides must point to the
+selected network. Direct application launches still use `X402_NETWORK_ID`.
+
+Verify all three network configurations without starting containers:
+
+```sh
+python3 deploy/test-network-config.py
+```
+
+Changing a selector does not convert existing node/indexer database volumes to a
+different network. Use a separate Compose project/volumes for a different network.
+
+Configured Blockfrost-compatible providers must expose `/genesis` with the matching
+network magic (`764824073` mainnet, `1` preprod, `2` preview). Identity is checked
+on health and payment chain access; mismatch or unavailable identity fails closed
+and no transaction is submitted. Successful identity checks are cached for 30 seconds.
+Application construction and wall-clock slot calculation remain offline; a provider
+that is still starting makes health/payment checks fail until its identity is available.

@@ -27,6 +27,82 @@ class BlockfrostChainServiceTest {
     final BackendService backend = mock(BackendService.class, RETURNS_DEEP_STUBS);
     final BlockfrostChainService chain = new BlockfrostChainService(backend, Duration.ofMillis(1), null,null);
     final byte[] tx = Base64.getDecoder().decode(TestTx.buildBase64(TestTx.Spec.defaults()));
+    @Test void pathologicalAddressScanHasAHardProviderCallBudget() throws Exception {
+        Utxo output = Utxo.builder().txHash(TestTx.NONCE_TX_HASH).outputIndex(0)
+                .address(TestTx.PAYER_ADDRESS).build();
+        Utxo other = Utxo.builder().txHash("ff".repeat(32)).outputIndex(0).build();
+        when(backend.getUtxoService().getTxOutput(TestTx.NONCE_TX_HASH, 0))
+                .thenReturn(Result.success("").withValue(output));
+        when(backend.getUtxoService().getUtxos(eq(TestTx.PAYER_ADDRESS), eq(100), anyInt()))
+                .thenReturn(Result.success("").withValue(Collections.nCopies(100, other)));
+        assertThat(chain.getUtxoState(TestTx.NONCE_TX_HASH, 0)).isInstanceOf(UtxoState.Unknown.class);
+        verify(backend.getUtxoService(), atMost(63)).getUtxos(anyString(), anyInt(), anyInt());
+    }
+
+    @Test void sessionReusesAddressPagesAndNonceAcrossInputs() throws Exception {
+        List<Utxo> outputs = new ArrayList<>();
+        for (int i = 0; i < 150; i++) {
+            Utxo output = Utxo.builder().txHash(TestTx.NONCE_TX_HASH).outputIndex(i)
+                    .address(TestTx.PAYER_ADDRESS).build();
+            outputs.add(output);
+            when(backend.getUtxoService().getTxOutput(TestTx.NONCE_TX_HASH, i))
+                    .thenReturn(Result.success("").withValue(output));
+        }
+        when(backend.getUtxoService().getUtxos(TestTx.PAYER_ADDRESS, 100, 1))
+                .thenReturn(Result.success("").withValue(outputs.subList(0, 100)));
+        when(backend.getUtxoService().getUtxos(TestTx.PAYER_ADDRESS, 100, 2))
+                .thenReturn(Result.success("").withValue(outputs.subList(100, 150)));
+        var lookup = chain.openUtxoLookup();
+        for (int i : List.of(0, 0, 1, 120, 40, 149))
+            assertThat(lookup.getUtxoState(TestTx.NONCE_TX_HASH, i)).isInstanceOf(UtxoState.Unspent.class);
+        verify(backend.getUtxoService()).getTxOutput(TestTx.NONCE_TX_HASH, 0);
+        verify(backend.getUtxoService(), times(2)).getUtxos(anyString(), anyInt(), anyInt());
+        // A new request must fetch a fresh live set.
+        assertThat(chain.openUtxoLookup().getUtxoState(TestTx.NONCE_TX_HASH, 0)).isInstanceOf(UtxoState.Unspent.class);
+        verify(backend.getUtxoService(), times(2)).getUtxos(TestTx.PAYER_ADDRESS, 100, 1);
+    }
+
+    @Test void totalBudgetCoversAllInputsAndFailsClosedWithoutFurtherCalls() throws Exception {
+        List<Utxo> outputs = new ArrayList<>();
+        for (int i = 0; i < 100; i++) {
+            Utxo output = Utxo.builder().txHash(TestTx.NONCE_TX_HASH).outputIndex(i)
+                    .address(TestTx.PAYER_ADDRESS).build();
+            outputs.add(output);
+            when(backend.getUtxoService().getTxOutput(TestTx.NONCE_TX_HASH, i))
+                    .thenReturn(Result.success("").withValue(output));
+        }
+        when(backend.getUtxoService().getUtxos(TestTx.PAYER_ADDRESS, 100, 1))
+                .thenReturn(Result.success("").withValue(outputs));
+        var lookup = chain.openUtxoLookup();
+        for (int i = 0; i < 63; i++)
+            assertThat(lookup.getUtxoState(TestTx.NONCE_TX_HASH, i)).isInstanceOf(UtxoState.Unspent.class);
+        for (int i = 63; i < 100; i++)
+            assertThat(lookup.getUtxoState(TestTx.NONCE_TX_HASH, i)).isInstanceOf(UtxoState.Unknown.class);
+        verify(backend.getUtxoService(), times(63)).getTxOutput(anyString(), anyInt());
+        verify(backend.getUtxoService(), times(1)).getUtxos(anyString(), anyInt(), anyInt());
+    }
+
+    @Test void blockedProviderReturnsUnknownAtRequestDeadline() throws Exception {
+        var release = new java.util.concurrent.CountDownLatch(1);
+        when(backend.getUtxoService().getTxOutput(TestTx.NONCE_TX_HASH, 0)).thenAnswer(invocation -> {
+            // Deliberately ignore cancellation, as an SDK transport may do.
+            while (release.getCount() > 0) {
+                try { release.await(); } catch (InterruptedException ignored) { }
+            }
+            return Result.error("stopped").code(503);
+        });
+        try {
+            var lookup = chain.openUtxoLookup(new org.cardanofoundation.x402.facilitator.chain.LookupBudget(
+                    64, Duration.ofMillis(100)));
+            org.junit.jupiter.api.Assertions.assertTimeoutPreemptively(Duration.ofSeconds(2), () -> {
+                assertThat(lookup.getUtxoState(TestTx.NONCE_TX_HASH, 0)).isInstanceOf(UtxoState.Unknown.class);
+                assertThat(lookup.getUtxoState(TestTx.NONCE_TX_HASH, 1)).isInstanceOf(UtxoState.Unknown.class);
+            });
+            verify(backend.getUtxoService(), atMostOnce()).getTxOutput(anyString(), anyInt());
+            verify(backend.getUtxoService(), never()).getUtxos(anyString(), anyInt(), anyInt());
+        } finally { release.countDown(); }
+    }
+
     @Test void currentSlotAdvancesBetweenBlocksUsingTheConfiguredNetworkClock() throws Exception {
         var latest = new com.bloxbean.cardano.client.backend.model.Block();
         latest.setSlot(9_999_970L); // No block has been produced for thirty slots.

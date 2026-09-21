@@ -243,6 +243,41 @@ class SettlementPostgresIT {
     }
 
     @Test
+    void fairSweepsAcrossInstancesPreserveProgressWhenAdvisoryLockIsBusy() throws Exception {
+        plainA.update("""
+                INSERT INTO facilitator.settlement
+                    (tx_hash, attempt_id, requirements_digest, network, status, claimed_at,
+                     selected_confirmations, submission_provenance, submission_accepted)
+                SELECT lpad(to_hex(i), 64, '0'), gen_random_uuid(), 'd', 'cardano:preprod',
+                       'SUBMITTED', now(), 1, 'LOCAL', true
+                  FROM generate_series(0, 200) AS i
+                """);
+        chain.includedDepth = FakeChainService.NOT_SEEN;
+        String later = String.format("%064x", 200);
+        chain.inclusionDepthByHash.put(later, 1);
+        var first = new SettlementReconciler(repoA, Map.of("cardano:preprod", chain), ds(), 1,
+                Duration.ofHours(1), Duration.ofHours(1), Clock.systemUTC(), true);
+        var second = new SettlementReconciler(repoB, Map.of("cardano:preprod", chain), ds(), 1,
+                Duration.ofHours(1), Duration.ofHours(1), Clock.systemUTC(), true);
+        first.sweep();
+        second.sweep();
+        assertThat(repoA.find(later).orElseThrow().status()).isEqualTo(SettlementRecord.Status.SUBMITTED);
+        try (Connection connection = ds().getConnection(); Statement statement = connection.createStatement()) {
+            statement.execute("SELECT pg_advisory_lock(" + 0x402_CA8DA_0L + ")");
+            first.sweep();
+            second.sweep();
+            assertThat(repoA.find(later).orElseThrow().status()).isEqualTo(SettlementRecord.Status.SUBMITTED);
+            statement.execute("SELECT pg_advisory_unlock(" + 0x402_CA8DA_0L + ")");
+        }
+        first.sweep();
+        assertThat(repoA.find(later).orElseThrow().status()).isEqualTo(SettlementRecord.Status.CONFIRMED);
+        second.sweep();
+        assertThat(repoB.find(later).orElseThrow().status()).isEqualTo(SettlementRecord.Status.CONFIRMED);
+        assertThat(repoA.find(String.format("%064x", 0)).orElseThrow().status())
+                .isEqualTo(SettlementRecord.Status.SUBMITTED);
+    }
+
+    @Test
     void responseJsonRoundTripsThroughPostgres() {
         String tx = TestTx.buildBase64(TestTx.Spec.defaults());
         SettleResponse r = serviceA.settle(payload(tx), requirements());

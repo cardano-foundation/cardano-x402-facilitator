@@ -156,7 +156,7 @@ ID and expected status.
 | `NOT_CONFIRMED` | Confirmation threshold not yet reached |
 | `CONFIRMED` | Evidence reached the persisted per-request threshold |
 | `FAILED` | Definitive rejection tombstone for new-format rows |
-| `EXPIRED` | Observation horizon passed; still never eligible for rebroadcast |
+| `EXPIRED` | NotSeen beyond transaction TTL plus 120-slot grace; never eligible for rebroadcast |
 
 A proven `NotSubmitted` outcome releases both claims atomically. A definitive
 rejection retains both. Timeout, transport uncertainty, process death after
@@ -264,3 +264,11 @@ Fails fast rather than surfacing misconfiguration as runtime errors:
 - [verification.md](verification.md) — the A–E rules in detail
 - [configuration.md](configuration.md) — every property
 - [../deploy/README.md](../deploy/README.md) — deployment, Compose, mainnet checklist
+
+### Reconciliation fairness
+
+Sweeps use a bounded 200-row keyset page ordered by claim time and transaction hash.
+The per-instance cursor advances even when observations fail or remain uncertain,
+then wraps after the last eligible row. A restart resets the cursor; an advisory-lock
+miss does not. Unknown or TTL-less records are preserved rather than expired to free
+queue capacity. No database migration is required for this scheduling change.

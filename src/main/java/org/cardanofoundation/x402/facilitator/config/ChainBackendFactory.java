@@ -40,9 +40,15 @@ public class ChainBackendFactory {
         // x402.settle is optional (absent = code defaults), so props.settle() may be null.
         Duration pollInterval = props.settle() == null
                 ? Duration.ofSeconds(3) : props.settle().pollIntervalOrDefault();
+        int networkMagic = switch (org.cardanofoundation.x402.facilitator.service.registry.CardanoNetworks.normalize(entry.id())) {
+            case "cardano:mainnet" -> 764824073;
+            case "cardano:preprod" -> 1;
+            case "cardano:preview" -> 2;
+            default -> throw new IllegalStateException("Unsupported network: " + entry.id());
+        };
         return new ChainBackend(
                 new BlockfrostChainService(backend, pollInterval, baseUrl,
-                        bf.projectId() == null ? "" : bf.projectId(), clock, Clock.systemUTC()),
+                        bf.projectId() == null ? "" : bf.projectId(), clock, Clock.systemUTC(), networkMagic),
                 new BlockfrostProtocolParamsProvider(backend),
                 clock);
     }

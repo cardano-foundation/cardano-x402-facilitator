@@ -93,7 +93,7 @@ the resource server's quote; settlement waiting time does not change that limit.
 
 | Key | Required | Notes |
 |---|---|---|
-| `id` | yes | Must be a supported network; CIP-34 aliases accepted |
+| `id` | yes | Must be a supported network; CIP-34 aliases normalize at startup; duplicate canonical networks are rejected |
 | `required` | no (`true`) | |
 | `chain.blockfrost.base-url` | yes | Hosted Blockfrost or a standalone yaci-store's Blockfrost-compatible endpoint (env `BLOCKFROST_BASE_URL`); startup fails without it |
 | `chain.blockfrost.project-id` | with hosted Blockfrost | Required for hosted Blockfrost, ignored by yaci-store; keep in secrets, not source (env `BLOCKFROST_PROJECT_ID`) |
@@ -185,7 +185,7 @@ per-policy behavior.
 | `x402.settle.accept-mempool` | `false` | **Keep false** |
 | `x402.settle.idempotent-replay` | `false` | Deprecated; retries always reconcile current evidence |
 | `x402.settle.stability-window` | `10m` | Rollback watch window |
-| `x402.settle.reconcile-horizon` | `24h` | TTL-less expiry fallback |
+| `x402.settle.reconcile-horizon` | `24h` | Retained for configuration compatibility; no expiry effect. Unknown or TTL-less rows remain pending |
 
 - **`accept-mempool`** — mempool presence is not payment. **Keep it `false`**
   regardless of chain backend. Turning it on does two things together: `/settle`
@@ -249,7 +249,7 @@ Both off by default, so the facilitator stays open unless you opt in.
 | Key | Default | Notes |
 |---|---|---|
 | `x402.security.api-keys` | `[]` | Non-empty ⇒ `X-API-Key` required on `/verify` and `/settle` |
-| `x402.security.rate-limit.requests-per-minute` | `0` | `0` = off. Per key, falling back to per IP |
+| `x402.security.rate-limit.requests-per-minute` | `0` | `0` = off. Per authenticated key, otherwise per remote IP (untrusted key headers are ignored) |
 
 ```yaml
 x402:
@@ -262,18 +262,22 @@ x402:
 Guards `/verify` and `/settle` only — `/supported`, `/health`, and actuator stay
 open for discovery and probes. The rate limiter is a fixed window per
 wall-clock minute, in-memory (per instance, not shared across replicas), swept
-once per minute so buckets stay bounded under IP rotation.
+once per minute to remove prior-minute buckets. Header rotation cannot create buckets
+when authentication is disabled. This bounds retention time, not the number of distinct
+remote IPs within a minute; put distributed admission controls at your ingress.
+Configure trusted proxy address handling at the ingress/container boundary; this filter
+uses the servlet remote address and does not trust caller-supplied forwarding headers.
 
 ## Environment variables (Compose)
 
 | Var | Default | Used by |
 |---|---|---|
 | `DB_PASSWORD`, `DB_PORT` | `facilitator`, `5432` | postgres |
-| `BLOCKFROST_BASE_URL` | hosted Blockfrost preprod | facilitator — point at a standalone yaci-store's Blockfrost-compatible endpoint instead to use it |
+| `BLOCKFROST_BASE_URL` | hosted Blockfrost for `CARDANO_NETWORK` | facilitator — point at a standalone yaci-store's Blockfrost-compatible endpoint instead to use it |
 | `BLOCKFROST_PROJECT_ID` | — | facilitator — required for hosted Blockfrost, ignored by yaci-store |
-| `CARDANO_NETWORK` | `preprod` | mithril-sync, node, facilitator |
+| `CARDANO_NETWORK` | `preprod` | All Compose profiles: node, indexer magic, Yano and canonical facilitator `X402_NETWORK_ID` |
 | `CARDANO_NODE_VERSION` | `10.4.1` | node image tag |
-| `YACI_PROTOCOL_MAGIC` | `1` | yaci-store sync (full profile) |
+| `X402_NETWORK_ID` | `cardano:preprod` outside Compose | Direct application network selector. Compose derives it from `CARDANO_NETWORK` |
 | `MITHRIL_SYNC` | `true` | `false` skips snapshot restore |
 
 See [../deploy/README.md](../deploy/README.md).
@@ -306,3 +310,37 @@ Select the depth in each resource-server quote, for example
 
 Work through the [mainnet readiness
 checklist](../deploy/README.md#mainnet-readiness-checklist) before going live.
+
+## Audit remediation compatibility notes
+
+Fresh payments require a finite transaction TTL and a positive `maxTimeoutSeconds`.
+Authenticated post-broadcast retries retain historical inclusion semantics.
+The decoder checks auxiliary metadata commitments against the original CBOR bytes
+and validates metadata bounds and text encoding. It supports legacy metadata maps
+and tag-259 metadata-only envelopes. Auxiliary script bundles, Mary array envelopes
+and other unsupported auxiliary formats are rejected conservatively, including when
+a custom phase-1 validator is installed.
+
+Input resolution uses one request-local session: at most 64 external UTxO calls
+and ten seconds total, including cached lookups. Nonce ownership is authenticated
+before resolving other inputs; address pages are reused within the request. Budget
+exhaustion or lookup-worker saturation returns unknown state and verification fails
+closed. These limits can reject valid payments with large input/address sets.
+Eight non-queued daemon workers cap outstanding provider calls; a provider ignoring
+interruption can continue after the request deadline but cannot create unlimited
+workers. Inclusion and protocol-parameter I/O have separate paths and are not
+covered by this input-resolution budget. Custom providers inherit a default
+`openUtxoLookup()` implementation; providers making multiple external calls inside
+one lookup should override it to account for every call.
+
+Reconciliation scans at most 200 rows per sweep, ordered by `(claimed_at, tx_hash)`,
+resumes after the previous batch and wraps at the end. Unchanged/unknown observations
+still advance the cursor. Each instance maintains its own cursor, which resets on
+restart; PostgreSQL advisory locking and fenced observations remain in effect.
+
+Configured Blockfrost-compatible providers must expose `/genesis` with the matching
+network magic (`764824073` mainnet, `1` preprod, `2` preview). Identity is checked
+on health and payment chain access; mismatch or unavailable identity fails closed
+and no transaction is submitted. Successful identity checks are cached for 30 seconds.
+Application construction and wall-clock slot calculation remain offline; a provider
+that is still starting makes health/payment checks fail until its identity is available.

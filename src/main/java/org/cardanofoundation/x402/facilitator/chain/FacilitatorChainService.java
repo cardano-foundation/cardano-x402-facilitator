@@ -16,6 +16,25 @@ public interface FacilitatorChainService {
     /** Throws ChainLookupException on lookup failure or a stale backing view. */
     UtxoState getUtxoState(String txHashHex, int index);
 
+    /**
+     * Opens one bounded session for all inputs of a verification request. Custom backends retain
+     * compatibility through this default: each getUtxoState invocation consumes one call. Backends
+     * that perform multiple external calls must override this method to account for each call.
+     */
+    default UtxoLookup openUtxoLookup() {
+        var budget = new LookupBudget();
+        java.util.Map<String, UtxoState> cache = new java.util.HashMap<>();
+        return (hash, index) -> {
+            try {
+                budget.checkDeadline();
+                String key = hash.toLowerCase(java.util.Locale.ROOT) + "#" + index;
+                return cache.computeIfAbsent(key, ignored -> budget.call(() -> getUtxoState(hash, index)));
+            } catch (LookupBudget.Exhausted e) {
+                return new UtxoState.Unknown();
+            }
+        };
+    }
+
     /** Current wall-clock slot in the network's era configuration, not the latest block's slot. */
     long getCurrentSlot();
 

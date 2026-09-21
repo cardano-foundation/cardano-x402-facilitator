@@ -9,6 +9,7 @@ import org.cardanofoundation.x402.facilitator.chain.ChainLookupException;
 import org.cardanofoundation.x402.facilitator.chain.FacilitatorChainService;
 import org.cardanofoundation.x402.facilitator.chain.NetworkClock;
 import org.cardanofoundation.x402.facilitator.chain.ProtocolParamsProvider;
+import org.cardanofoundation.x402.facilitator.chain.UtxoLookup;
 import org.cardanofoundation.x402.facilitator.model.ErrorCodes;
 import org.cardanofoundation.x402.facilitator.model.chain.ProtocolParams;
 import org.cardanofoundation.x402.facilitator.model.chain.UtxoState;
@@ -105,6 +106,8 @@ public class ExactCardanoScheme {
             if (requirements.amount() == null || requirements.amount().length() > 80
                     || !requirements.amount().matches("[1-9][0-9]*"))
                 return VerifyResponse.invalid(ErrorCodes.REQUIREMENTS_INVALID, "amount must be a canonical positive integer", "");
+            if (!broadcast && (requirements.maxTimeoutSeconds() == null || requirements.maxTimeoutSeconds() <= 0))
+                return VerifyResponse.invalid(ErrorCodes.REQUIREMENTS_INVALID, "maxTimeoutSeconds must be positive", "");
             BigInteger requestedAmount = new BigInteger(requirements.amount());
             String assetKey = requirements.asset() == null ? "" : requirements.asset();
             boolean isLovelace = "lovelace".equals(assetKey);
@@ -134,12 +137,18 @@ public class ExactCardanoScheme {
             if (!tx.isValid())
                 return VerifyResponse.invalid(ErrorCodes.PHASE2_INVALID, null, "");
 
-            if (!broadcast && (tx.ttlSlot() != null || tx.validityStartSlot() != null)) {
+            if (!broadcast && tx.ttlSlot() == null) {
+                // Retain the established Masumi error while enforcing the bound for every method.
+                boolean masumi = requirements.extra() != null
+                        && "masumi".equals(requirements.extra().get("assetTransferMethod"));
+                return VerifyResponse.invalid(masumi ? ErrorCodes.MASUMI_DEADLINE : ErrorCodes.INVALID_PAYLOAD,
+                        "transaction TTL is required", "");
+            }
+            if (!broadcast) {
                 long slot = chain.getCurrentSlot();
-                if (tx.ttlSlot() != null && tx.ttlSlot() <= slot)
+                if (tx.ttlSlot() <= slot)
                     return VerifyResponse.invalid(ErrorCodes.TTL_EXPIRED, null, "");
-                if (tx.ttlSlot() != null && requirements.maxTimeoutSeconds() != null
-                        && clock.slotToTime(tx.ttlSlot()).isAfter(clock.slotToTime(slot)
+                if (clock.slotToTime(tx.ttlSlot()).isAfter(clock.slotToTime(slot)
                         .plusSeconds(requirements.maxTimeoutSeconds())))
                     return VerifyResponse.invalid(ErrorCodes.TTL_TOO_FAR,
                             "ttlSlot=" + tx.ttlSlot() + ", currentSlot=" + slot
@@ -152,9 +161,10 @@ public class ExactCardanoScheme {
                 return VerifyResponse.invalid(ErrorCodes.INVALID_PAYLOAD, "transaction exceeds maxTxSize", "");
             Map<String, UtxoState> states = new LinkedHashMap<>();
             String payer = null;
+            var inputLookup = chain.openUtxoLookup();
             if (broadcast) {
                 try {
-                    UtxoState state = lookup(nonceLower);
+                    UtxoState state = lookup(inputLookup, nonceLower);
                     payer = state instanceof UtxoState.Unspent u ? u.ownerAddress()
                             : state instanceof UtxoState.Spent spent ? spent.ownerAddress() : null;
                 } catch (RuntimeException ignored) { /* durable payer is authenticated by the journal */ }
@@ -164,14 +174,24 @@ public class ExactCardanoScheme {
                 if (journaledPayer != null && !journaledPayer.isEmpty() && !journaledPayer.equals(payer))
                     return VerifyResponse.invalid(ErrorCodes.PAYER_NOT_WITNESS, "journaled payer differs from input owner", payer);
             } else {
-                for (String ref : tx.inputs()) states.put(ref, lookup(ref));
-                if (states.values().stream().anyMatch(v -> v == null || v instanceof UtxoState.Unknown))
-                    return VerifyResponse.invalid(ErrorCodes.CHAIN_LOOKUP_FAILED, "input state unknown", "");
-                if (!(states.get(nonceLower) instanceof UtxoState.Unspent unspent))
+                UtxoState nonceState = lookup(inputLookup, nonceLower);
+                if (nonceState == null || nonceState instanceof UtxoState.Unknown)
+                    return VerifyResponse.invalid(ErrorCodes.CHAIN_LOOKUP_FAILED, "nonce state unknown", "");
+                if (!(nonceState instanceof UtxoState.Unspent unspent))
                     return VerifyResponse.invalid(ErrorCodes.NONCE_NOT_ON_CHAIN, null, "");
                 payer = unspent.ownerAddress();
-                if (states.values().stream().anyMatch(v -> !(v instanceof UtxoState.Unspent)))
-                    return VerifyResponse.invalid(ErrorCodes.INPUT_NOT_AVAILABLE, null, payer);
+                Optional<String> nonceAuthorization = checkPayerAuthorization(payer, tx);
+                if (nonceAuthorization.isPresent()) return VerifyResponse.invalid(nonceAuthorization.get(), null, payer);
+                states.put(nonceLower, nonceState);
+                for (String ref : tx.inputs()) {
+                    if (ref.equals(nonceLower)) continue;
+                    UtxoState state = lookup(inputLookup, ref);
+                    if (state == null || state instanceof UtxoState.Unknown)
+                        return VerifyResponse.invalid(ErrorCodes.CHAIN_LOOKUP_FAILED, "input state unknown", payer);
+                    if (!(state instanceof UtxoState.Unspent))
+                        return VerifyResponse.invalid(ErrorCodes.INPUT_NOT_AVAILABLE, null, payer);
+                    states.put(ref, state);
+                }
             }
             Optional<String> payerError = checkPayerAuthorization(payer, tx);
             if (payerError.isPresent()) return VerifyResponse.invalid(payerError.get(), null, payer);
@@ -187,9 +207,9 @@ public class ExactCardanoScheme {
         }
     }
 
-    private UtxoState lookup(String ref) {
+    private UtxoState lookup(UtxoLookup inputLookup, String ref) {
         int hashEnd = ref.indexOf('#');
-        try { return chain.getUtxoState(ref.substring(0, hashEnd), Integer.parseInt(ref.substring(hashEnd + 1))); }
+        try { return inputLookup.getUtxoState(ref.substring(0, hashEnd), Integer.parseInt(ref.substring(hashEnd + 1))); }
         catch (RuntimeException e) { throw new ChainLookupException("input lookup failed", e); }
     }
 

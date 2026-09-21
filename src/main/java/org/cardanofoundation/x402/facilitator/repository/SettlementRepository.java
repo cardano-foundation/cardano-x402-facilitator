@@ -147,20 +147,36 @@ public class SettlementRepository {
         return jdbc.update(sql.toString(), p) == 1;
     }
 
+    /** Stable keyset position; tx_hash breaks ties between claims with the same timestamp. */
+    public record ReconcileCursor(Instant claimedAt, String txHash) {
+        public static ReconcileCursor after(SettlementRecord rec) {
+            return new ReconcileCursor(rec.claimedAt(), rec.txHash());
+        }
+    }
+
     /** Non-terminal rows the reconciler owns, plus recent CONFIRMED for the stability re-check. */
     public List<SettlementRecord> dueForReconcile(Instant confirmedAfter, int limit) {
+        return dueForReconcile(confirmedAfter, limit, null);
+    }
+
+    /** Continue a bounded scan without repeatedly selecting permanently pending older rows. */
+    public List<SettlementRecord> dueForReconcile(Instant confirmedAfter, int limit, ReconcileCursor cursor) {
+        MapSqlParameterSource params = new MapSqlParameterSource()
+                .addValue("after", Timestamp.from(confirmedAfter)).addValue("limit", limit);
+        String position = "";
+        if (cursor != null) {
+            position = " AND (claimed_at > :claimedAt OR (claimed_at = :claimedAt AND tx_hash > :txHash))";
+            params.addValue("claimedAt", Timestamp.from(cursor.claimedAt())).addValue("txHash", cursor.txHash());
+        }
         return jdbc.query("""
                 SELECT %s FROM facilitator.settlement
-                 WHERE status IN ('SUBMITTING', 'SUBMITTED', 'NOT_CONFIRMED')
+                 WHERE (status IN ('SUBMITTING', 'SUBMITTED', 'NOT_CONFIRMED')
                     OR (submission_provenance = 'LEGACY' AND status IN ('CLAIMED', 'FAILED', 'EXPIRED'))
-                    OR (status = 'CONFIRMED' AND (confirmed_at > :after OR selected_confirmations IS NULL))
-                 ORDER BY claimed_at
+                    OR (status = 'CONFIRMED' AND (confirmed_at > :after OR selected_confirmations IS NULL)))
+                %s
+                 ORDER BY claimed_at, tx_hash
                  LIMIT :limit
-                """.formatted(COLS),
-                new MapSqlParameterSource()
-                        .addValue("after", Timestamp.from(confirmedAfter))
-                        .addValue("limit", limit),
-                SettlementRepository::mapRow);
+                """.formatted(COLS, position), params, SettlementRepository::mapRow);
     }
 
     private static MapSqlParameterSource params(SettlementRecord r) {

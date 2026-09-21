@@ -10,6 +10,8 @@ import lombok.extern.log4j.Log4j2;
 import org.cardanofoundation.x402.facilitator.chain.ChainLookupException;
 import org.cardanofoundation.x402.facilitator.chain.FacilitatorChainService;
 import org.cardanofoundation.x402.facilitator.chain.NetworkClock;
+import org.cardanofoundation.x402.facilitator.chain.LookupBudget;
+import org.cardanofoundation.x402.facilitator.chain.UtxoLookup;
 import org.cardanofoundation.x402.facilitator.model.chain.BackendHealth;
 import org.cardanofoundation.x402.facilitator.model.chain.InclusionResult;
 import org.cardanofoundation.x402.facilitator.model.chain.SubmissionResult;
@@ -32,8 +34,8 @@ import java.util.regex.Pattern;
  * Blockfrost backend: owns every chain capability for its network.
  * "Unspent" = the outref is present in its owning address's live UTxO set
  * (Blockfrost address UTxOs are unspent-only). 404 on the outref itself folds
- * into Spent() — consistent with "not in live set" semantics; Unknown() never
- * occurs on this backend. Submission is era-agnostic (raw CBOR over HTTP).
+ * into Spent() — consistent with "not in live set" semantics. Exhausted lookup
+ * budgets return Unknown(). Submission is era-agnostic (raw CBOR over HTTP).
  */
 @Log4j2
 @RequiredArgsConstructor
@@ -46,6 +48,10 @@ public class BlockfrostChainService implements FacilitatorChainService {
     private final String projectId;
     private final NetworkClock networkClock;
     private final Clock wallClock;
+    /** Null only for legacy/manual construction without a configured network. */
+    private final Integer expectedNetworkMagic;
+    private volatile boolean networkIdentityVerified;
+    private volatile long identityCheckedAtNanos;
     private volatile long lastProbeMillis;
     private volatile boolean lastProbeOk;
 
@@ -58,38 +64,92 @@ public class BlockfrostChainService implements FacilitatorChainService {
         this(backend, pollInterval, baseUrl, projectId, null, Clock.systemUTC());
     }
 
+    /** Compatibility overload; configured application backends use the network-bound constructor. */
+    public BlockfrostChainService(BackendService backend, Duration pollInterval, String baseUrl, String projectId,
+                                 NetworkClock networkClock, Clock wallClock) {
+        this(backend, pollInterval, baseUrl, projectId, networkClock, wallClock, null);
+    }
+
+    private void requireNetworkIdentity(LookupBudget budget) {
+        if (expectedNetworkMagic == null) return;
+        if (networkIdentityVerified && System.nanoTime() - identityCheckedAtNanos < Duration.ofSeconds(30).toNanos()) return;
+        var result = budget.call(() -> backend.getNetworkInfoService().getNetworkInfo());
+        if (result == null || !result.isSuccessful() || result.getValue() == null
+                || !expectedNetworkMagic.equals(result.getValue().getNetworkMagic())) {
+            networkIdentityVerified = false;
+            throw new ChainLookupException("provider genesis network magic is missing or does not match configured network");
+        }
+        identityCheckedAtNanos = System.nanoTime();
+        networkIdentityVerified = true;
+    }
+
     @Override
     public UtxoState getUtxoState(String txHashHex, int index) {
-        try {
-            Result<Utxo> outputRes = backend.getUtxoService().getTxOutput(txHashHex, index);
-            if (!outputRes.isSuccessful()) {
-                // Never created: no owner to report.
-                if (outputRes.code() == 404) return new UtxoState.Spent(null);
-                throw new ChainLookupException("Blockfrost getTxOutput failed: " + outputRes.getResponse());
-            }
-            // The producing transaction names the owner whether or not the output
-            // still exists, which is what lets client-submitted payments resolve a
-            // payer from a nonce their own transaction already consumed.
-            String owner = outputRes.getValue().getAddress();
-            for (int page = 1; ; page++) {
-                Result<List<Utxo>> pageRes = backend.getUtxoService().getUtxos(owner, 100, page);
-                if (!pageRes.isSuccessful()) {
-                    if (pageRes.code() == 404) return new UtxoState.Spent(owner); // address has no UTxOs
-                    throw new ChainLookupException("Blockfrost getUtxos failed: " + pageRes.getResponse());
+        return openUtxoLookup().getUtxoState(txHashHex, index);
+    }
+
+    @Override
+    public UtxoLookup openUtxoLookup() { return openUtxoLookup(new LookupBudget()); }
+
+    // Package-private limits injection permits deterministic, offline boundary tests.
+    UtxoLookup openUtxoLookup(LookupBudget budget) {
+        Map<String, UtxoState> results = new HashMap<>();
+        Map<String, AddressScan> addresses = new HashMap<>();
+        return (hash, index) -> {
+            try {
+                budget.checkDeadline();
+                requireNetworkIdentity(budget);
+                String key = outref(hash, index);
+                if (results.containsKey(key)) return results.get(key);
+                Result<Utxo> outputRes = budget.call(() -> backend.getUtxoService().getTxOutput(hash, index));
+                if (!outputRes.isSuccessful()) {
+                    if (outputRes.code() == 404) {
+                        UtxoState state = new UtxoState.Spent(null);
+                        results.put(key, state);
+                        return state;
+                    }
+                    throw new ChainLookupException("Blockfrost getTxOutput failed: " + outputRes.getResponse());
                 }
-                List<Utxo> utxos = pageRes.getValue();
-                if (utxos == null || utxos.isEmpty()) return new UtxoState.Spent(owner);
-                boolean present = utxos.stream().anyMatch(u ->
-                        u.getTxHash().equalsIgnoreCase(txHashHex) && u.getOutputIndex() == index);
-                if (present) return snapshot(outputRes.getValue());
-                if (page >= 1000) return new UtxoState.Unknown();
-                if (utxos.size() < 100) return new UtxoState.Spent(owner);
+                Utxo output = outputRes.getValue();
+                if (output == null || output.getAddress() == null)
+                    throw new ChainLookupException("Blockfrost output has no owner");
+                String owner = output.getAddress();
+                AddressScan scan = addresses.computeIfAbsent(owner, ignored -> new AddressScan());
+                while (!scan.live.contains(key) && !scan.complete) {
+                    int page = scan.nextPage;
+                    Result<List<Utxo>> pageRes = budget.call(() -> backend.getUtxoService().getUtxos(owner, 100, page));
+                    if (!pageRes.isSuccessful()) {
+                        if (pageRes.code() == 404) { scan.complete = true; break; }
+                        throw new ChainLookupException("Blockfrost getUtxos failed: " + pageRes.getResponse());
+                    }
+                    List<Utxo> utxos = pageRes.getValue();
+                    if (utxos == null || utxos.size() > 100)
+                        throw new ChainLookupException("invalid Blockfrost UTxO page");
+                    for (Utxo utxo : utxos) scan.live.add(outref(utxo.getTxHash(), utxo.getOutputIndex()));
+                    scan.complete = utxos.size() < 100;
+                    scan.nextPage++;
+                }
+                UtxoState state = scan.live.contains(key) ? snapshot(output) : new UtxoState.Spent(owner);
+                results.put(key, state);
+                return state;
+            } catch (LookupBudget.Exhausted e) {
+                return new UtxoState.Unknown();
+            } catch (ChainLookupException e) {
+                throw e;
+            } catch (Exception e) {
+                throw new ChainLookupException("Blockfrost lookup failed", e);
             }
-        } catch (ChainLookupException e) {
-            throw e;
-        } catch (Exception e) {
-            throw new ChainLookupException("Blockfrost lookup failed", e);
-        }
+        };
+    }
+
+    private static String outref(String hash, int index) {
+        return hash.toLowerCase(java.util.Locale.ROOT) + "#" + index;
+    }
+
+    private static final class AddressScan {
+        final java.util.Set<String> live = new java.util.HashSet<>();
+        int nextPage = 1;
+        boolean complete;
     }
 
     @Override
@@ -137,6 +197,8 @@ public class BlockfrostChainService implements FacilitatorChainService {
 
     @Override
     public SubmissionResult submitTransaction(byte[] txBytes) {
+        try { requireNetworkIdentity(new LookupBudget()); }
+        catch (RuntimeException e) { return new SubmissionResult.NotSubmitted("provider network identity unavailable or mismatched"); }
         String expectedHash;
         try { expectedHash = TransactionUtil.getTxHash(txBytes).toLowerCase(java.util.Locale.ROOT); }
         catch (RuntimeException e) { return new SubmissionResult.NotSubmitted("transaction cannot be hashed"); }
@@ -164,6 +226,7 @@ public class BlockfrostChainService implements FacilitatorChainService {
     @Override
     public InclusionResult checkInclusion(String txHashHex) {
         try {
+            requireNetworkIdentity(new LookupBudget());
             Result<TransactionContent> res = backend.getTransactionService().getTransaction(txHashHex);
             if (!res.isSuccessful()) {
                 // Not in a block. It may still be in a mempool, which is the
@@ -253,12 +316,13 @@ public class BlockfrostChainService implements FacilitatorChainService {
             return lastProbeOk ? BackendHealth.ok() : BackendHealth.down("last Blockfrost probe failed");
         }
         try {
+            requireNetworkIdentity(new LookupBudget());
             latestBlock();
             lastProbeOk = true;
         } catch (RuntimeException e) {
             lastProbeOk = false;
         }
         lastProbeMillis = now;
-        return lastProbeOk ? BackendHealth.ok() : BackendHealth.down("Blockfrost unreachable or key invalid");
+        return lastProbeOk ? BackendHealth.ok() : BackendHealth.down("Blockfrost unreachable, key invalid, or network identity mismatched");
     }
 }
