@@ -36,8 +36,6 @@ jobs:
         run: npm ci --prefix interop --ignore-scripts
       - name: Java, PostgreSQL Testcontainers, and TypeScript interop
         run: ./gradlew test interop --rerun-tasks
-      - name: PostgreSQL role boundaries and existing-volume upgrade
-        run: sh deploy/test-postgres-roles.sh
       - name: Compose network rendering
         run: python3 deploy/test-network-config.py
 

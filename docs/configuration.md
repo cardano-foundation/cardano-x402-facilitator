@@ -37,9 +37,9 @@ service itself, not the facilitator; see
 | Key | Default | Notes |
 |---|---|---|
 | `server.port` | `4022` | |
-| `spring.datasource.url` | `jdbc:postgresql://localhost:5432/facilitator` | env `DB_URL` |
-| `spring.datasource.username` | `facilitator` | env `DB_USER` |
-| `spring.datasource.password` | `facilitator` | env `DB_PASSWORD` |
+| `spring.datasource.url` | `jdbc:postgresql://localhost:5432/postgres` | env `DB_URL` |
+| `spring.datasource.username` | `postgres` | env `DB_USER` |
+| `spring.datasource.password` | `postgres` (local development only) | env `DB_PASSWORD` |
 | `spring.flyway.enabled` | `false` | Deliberate — see below |
 | `spring.threads.virtual.enabled` | `true` | |
 
@@ -286,7 +286,7 @@ slots. A block tip alone does not satisfy this proof.
 
 | Var | Default | Used by |
 |---|---|---|
-| `POSTGRES_ADMIN_PASSWORD`, `FACILITATOR_DB_PASSWORD`, `YACI_DB_PASSWORD` | required, distinct | database administrator and separate application roles |
+| `POSTGRES_ADMIN_PASSWORD` | `postgres` (local development only) | shared PostgreSQL user for the facilitator and Yaci Store |
 | Facilitator API host port | `127.0.0.1:4022` | Compose publishes locally; remote ingress protection is operator-managed |
 | `BLOCKFROST_BASE_URL` | hosted Blockfrost for `CARDANO_NETWORK` | facilitator — point at a standalone yaci-store's Blockfrost-compatible endpoint instead to use it |
 | `BLOCKFROST_PROJECT_ID` | — | facilitator — required for hosted Blockfrost, ignored by yaci-store |

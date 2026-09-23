@@ -25,11 +25,19 @@ facilitator does not embed an indexer either way.
 
 `deploy/docker-compose.yml` defines three profiles:
 
+From `deploy/`, copy `.env.example` to `.env`. For the light profile with
+hosted Blockfrost, set `BLOCKFROST_PROJECT_ID`. Compose loads `.env`
+automatically; the file is ignored by Git. The database password defaults to
+`postgres` for local development. Override `POSTGRES_ADMIN_PASSWORD` with a
+strong value for any non-local deployment. An existing `pgdata` volume retains
+its stored password; see [existing volumes](#postgresql-and-existing-volumes).
+
 - **light** — `postgres` + `facilitator` (hosted Blockfrost by default). To
   point it at a standalone yaci-store instead, set `BLOCKFROST_BASE_URL` to its
   Blockfrost-compatible endpoint on the `facilitator` service:
   ```bash
-  BLOCKFROST_PROJECT_ID=preprod... docker compose --profile light up -d
+  test -e .env || cp .env.example .env # set BLOCKFROST_PROJECT_ID for hosted Blockfrost
+  docker compose --profile light up -d --build
   ```
 - **full** — `postgres` + `mithril-sync` → `cardano-node` → **`yaci-store`** →
   `facilitator-node`. Mithril restores a signed node-DB snapshot so the node
@@ -45,7 +53,7 @@ Key environment variables:
 
 | Var | Default | Used by |
 |---|---|---|
-| `POSTGRES_ADMIN_PASSWORD`, `FACILITATOR_DB_PASSWORD`, `YACI_DB_PASSWORD` | required, distinct | database administrator and separate application roles |
+| `POSTGRES_ADMIN_PASSWORD` | `postgres` (local development only) | shared PostgreSQL password for the facilitator and Yaci Store |
 | Facilitator API host port | `127.0.0.1:4022` | local published listener in every Compose profile |
 | `BLOCKFROST_BASE_URL` | hosted Blockfrost for `CARDANO_NETWORK` (light) / yaci-store URL (full, hardcoded) | facilitator |
 | `BLOCKFROST_PROJECT_ID` | — | facilitator — required for hosted Blockfrost, ignored by yaci-store |
@@ -65,39 +73,30 @@ The Docker build runs the offline Masumi and script derivation tests on the
 target platform. Missing or incompatible native libraries fail the build rather
 than first appearing as a payment-time HTTP 500.
 
-### PostgreSQL roles and existing volumes
+### PostgreSQL and existing volumes
 
-On a fresh volume, `deploy/postgres/10-roles.sh` creates two non-superuser
-login roles. `facilitator` owns its settlement schema and Flyway history;
-`yaci_store` owns its own schema. Neither can access the other's private
-schema. Each has `CONNECT, CREATE` on the shared `postgres` database because
-the immutable V1 migration executes `CREATE SCHEMA IF NOT EXISTS`, which
-requires database CREATE even if the schema already exists. Thus these roles
-can create another schema, but cannot create databases or roles or become
-administrators. PostgreSQL has no published host port.
+Compose uses the standard `postgres:17-alpine` image with one `postgres`
+database and its built-in `postgres` superuser. The facilitator's Flyway
+migrations create and use the `facilitator` schema; Yaci Store's Flyway creates
+and uses `yaci_store` in the full profile. The schemas have separate migration
+histories, but both applications have superuser credentials and can modify one
+another's data. This configuration is for local development, not a production
+privilege boundary. PostgreSQL has no published host port.
 
-For an **existing** `pgdata` volume, changing environment passwords alone
-does not update PostgreSQL roles and init scripts do not rerun. Before starting
-the new facilitator/Yaci images:
+For an **existing** `pgdata` volume, Compose does not recreate roles or reset
+passwords. If the stored `postgres` password differs from
+`POSTGRES_ADMIN_PASSWORD`, use the existing password as the Compose setting.
+If you intentionally rotate it later, stop application writers, back up the
+database, connect through the local socket with
+`docker compose --profile light exec -u postgres postgres psql -U postgres -d postgres`,
+and run `\password postgres` in `psql`. Then update `POSTGRES_ADMIN_PASSWORD`
+in the private `.env` and recreate the services. Do not put a password in
+shell history or a SQL command.
+The current volume's journal and Flyway history stay in place; do not delete
+the volume to make the new configuration start. The authentication flags in
+Compose affect only fresh volumes, not an existing `pg_hba.conf`.
 
-1. Stop all facilitator and Yaci writers; make and verify a database backup.
-2. Set the three required password variables in the deployment environment.
-3. Inspect the existing volume's `pg_hba.conf` and replace any TCP `trust`
-   authentication rules with `scram-sha-256`, preserving intentional
-   addresses/TLS/reject rules. Reload PostgreSQL and verify a wrong password
-   is rejected over the container network. The upgrade script fails closed
-   while a TCP trust rule remains. The Compose `POSTGRES_INITDB_ARGS` setting
-   hardens fresh volumes only; it does not rewrite an existing `pg_hba.conf`.
-4. Start only PostgreSQL with the existing volume, then run
-   `docker compose -f deploy/docker-compose.yml --profile light exec -u postgres postgres sh /opt/x402/upgrade-existing.sh`.
-5. Confirm the script succeeds, then start the selected profile. The upgrade
-   changes only the two application schemas and their contained objects in one
-   transaction; it preserves Flyway history and does not reset journal rows.
-   The script also rotates the existing administrator password to
-   `POSTGRES_ADMIN_PASSWORD`.
-
-Use a separate Compose project for each network. Do not delete the existing
-volume to make the new configuration start.
+Use a separate Compose project for each network.
 
 If an older ARM64 image reports `UnsatisfiedLinkError` for
 `libaiken_jna_wrapper.so`, rebuild and recreate the facilitator from the project
@@ -178,7 +177,8 @@ service itself — see that service's block in `deploy/docker-compose.yml`.
 - [ ] Configure `x402.masumi.allowed-script-hashes.cardano:mainnet` with your
       deployment's `vested_pay` escrow script hash, to serve only that one. The
       address is derived and checked regardless; the allowlist narrows it.
-- [ ] Set distinct database passwords; put the loopback-bound facilitator
+- [ ] Replace the development database password and use production-specific
+      least-privilege database accounts; put the loopback-bound facilitator
       behind an authenticated, traffic-limited TLS ingress before remote use.
 - [ ] Confirm `x402.settle.accept-mempool=false` (never grant on mempool).
 - [ ] Set `extra.confirmationPolicy.l1Confirmations` in resource-server quotes

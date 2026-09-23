@@ -8,9 +8,9 @@ spring:
     virtual:
       enabled: true
   datasource:
-    url: ${DB_URL:jdbc:postgresql://localhost:5432/facilitator}
-    username: ${DB_USER:facilitator}
-    password: ${DB_PASSWORD:facilitator}
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/postgres}
+    username: ${DB_USER:postgres}
+    password: ${DB_PASSWORD:postgres}
   flyway:
     url: ${DB_URL:jdbc:postgresql://localhost:5432/postgres}
     user: ${DB_USER:postgres}

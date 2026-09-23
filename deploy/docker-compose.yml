@@ -12,7 +12,7 @@
 # The facilitator reaches the chain through the Blockfrost provider; a standalone
 # yaci-store or a yano node is consumed the same way, via its Blockfrost-compatible API.
 #
-# Bring up light:  docker compose --profile light up -d
+# Bring up light:  docker compose --profile light up -d --build
 # Bring up full:   CARDANO_NETWORK=preprod docker compose --profile full up -d
 # Bring up yano:   docker compose --profile yano up -d
 name: cardano-x402-facilitator
@@ -24,15 +24,11 @@ services:
     environment:
       POSTGRES_DB: postgres
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: ${POSTGRES_ADMIN_PASSWORD:?set POSTGRES_ADMIN_PASSWORD}
+      POSTGRES_PASSWORD: ${POSTGRES_ADMIN_PASSWORD:-postgres}
       POSTGRES_HOST_AUTH_METHOD: scram-sha-256
       POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256 --auth-local=trust
-      FACILITATOR_DB_PASSWORD: ${FACILITATOR_DB_PASSWORD:?set FACILITATOR_DB_PASSWORD}
-      YACI_DB_PASSWORD: ${YACI_DB_PASSWORD:?set YACI_DB_PASSWORD}
     volumes:
       - pgdata:/var/lib/postgresql/data
-      - ./postgres/10-roles.sh:/docker-entrypoint-initdb.d/10-roles.sh:ro
-      - ./postgres/upgrade-existing.sh:/opt/x402/upgrade-existing.sh:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
       interval: 5s
@@ -53,8 +49,8 @@ services:
         condition: service_healthy
     environment:
       DB_URL: jdbc:postgresql://postgres:5432/postgres
-      DB_USER: facilitator
-      DB_PASSWORD: ${FACILITATOR_DB_PASSWORD:?set FACILITATOR_DB_PASSWORD}
+      DB_USER: postgres
+      DB_PASSWORD: ${POSTGRES_ADMIN_PASSWORD:-postgres}
       # Blockfrost provider. Point BLOCKFROST_BASE_URL at hosted Blockfrost (default)
       # or a standalone yaci-store's Blockfrost-compatible endpoint, e.g.
       # http://my-yaci-store:8080/api/v1/blockfrost; project-id is ignored by yaci-store.
@@ -134,8 +130,9 @@ services:
       STORE_CARDANO_N2C_NODE_SOCKET_PATH: /ipc/node.socket   # submission (N2C)
       # Shared Postgres instance, own schema (the facilitator uses the `facilitator` schema).
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/postgres?currentSchema=yaci_store
-      SPRING_DATASOURCE_USERNAME: yaci_store
-      SPRING_DATASOURCE_PASSWORD: ${YACI_DB_PASSWORD:?set YACI_DB_PASSWORD}
+      SPRING_DATASOURCE_USERNAME: postgres
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_ADMIN_PASSWORD:-postgres}
+      SPRING_FLYWAY_SCHEMAS: yaci_store
       # Expose the Blockfrost-compatible API that facilitator-node reaches via BLOCKFROST_BASE_URL below.
       STORE_EXTENSIONS_BLOCKFROST_ENABLED: "true"
       BLOCKFROST_APIPREFIX: /api/v1/blockfrost
@@ -174,8 +171,8 @@ services:
         condition: service_started
     environment:
       DB_URL: jdbc:postgresql://postgres:5432/postgres
-      DB_USER: facilitator
-      DB_PASSWORD: ${FACILITATOR_DB_PASSWORD:?set FACILITATOR_DB_PASSWORD}
+      DB_USER: postgres
+      DB_PASSWORD: ${POSTGRES_ADMIN_PASSWORD:-postgres}
       X402_NETWORK_ID: cardano:${CARDANO_NETWORK:-preprod}
       # Consume the standalone yaci-store via its Blockfrost-compatible API — the same
       # blockfrost provider as hosted Blockfrost; project-id is ignored by yaci-store.
@@ -235,8 +232,8 @@ services:
         condition: service_started
     environment:
       DB_URL: jdbc:postgresql://postgres:5432/postgres
-      DB_USER: facilitator
-      DB_PASSWORD: ${FACILITATOR_DB_PASSWORD:?set FACILITATOR_DB_PASSWORD}
+      DB_USER: postgres
+      DB_PASSWORD: ${POSTGRES_ADMIN_PASSWORD:-postgres}
       X402_NETWORK_ID: cardano:${CARDANO_NETWORK:-preprod}
       # Consume the yano node via its Blockfrost-compatible REST API — the same
       # blockfrost provider as hosted Blockfrost / yaci-store; project-id is ignored.

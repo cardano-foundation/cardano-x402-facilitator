@@ -58,8 +58,16 @@ Requires Java 21 and a PostgreSQL. With Docker:
 
 ```bash
 cd deploy
-BLOCKFROST_PROJECT_ID=preprod... docker compose --profile light up -d
+test -e .env || cp .env.example .env
+# Set BLOCKFROST_PROJECT_ID in .env; optionally override the local DB password.
+docker compose --profile light up -d --build
 ```
+
+Compose uses the official PostgreSQL image with a single `postgres` user and
+`POSTGRES_ADMIN_PASSWORD` (local default `postgres`). Keep `deploy/.env`
+private; it is ignored by Git. An existing volume retains its stored password;
+follow the [existing-volume guidance](deploy/README.md#postgresql-and-existing-volumes)
+if the configured password differs.
 
 Or run it directly:
 
