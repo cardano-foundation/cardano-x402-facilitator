@@ -50,10 +50,12 @@ public class BlockfrostChainService implements FacilitatorChainService {
     private final Clock wallClock;
     /** Null only for legacy/manual construction without a configured network. */
     private final Integer expectedNetworkMagic;
+    private final Duration maxTipAge;
     private volatile boolean networkIdentityVerified;
     private volatile long identityCheckedAtNanos;
-    private volatile long lastProbeMillis;
+    private volatile long lastProbeNanos;
     private volatile boolean lastProbeOk;
+    private volatile long lastProbeSlot = -1;
 
     private static final Pattern TX_HASH = Pattern.compile("^[0-9a-fA-F]{64}$");
     private static final Duration MEMPOOL_TIMEOUT = Duration.ofSeconds(10);
@@ -67,7 +69,12 @@ public class BlockfrostChainService implements FacilitatorChainService {
     /** Compatibility overload; configured application backends use the network-bound constructor. */
     public BlockfrostChainService(BackendService backend, Duration pollInterval, String baseUrl, String projectId,
                                  NetworkClock networkClock, Clock wallClock) {
-        this(backend, pollInterval, baseUrl, projectId, networkClock, wallClock, null);
+        this(backend, pollInterval, baseUrl, projectId, networkClock, wallClock, null, Duration.ofMinutes(5));
+    }
+
+    public BlockfrostChainService(BackendService backend, Duration pollInterval, String baseUrl, String projectId,
+                                 NetworkClock networkClock, Clock wallClock, Integer expectedNetworkMagic) {
+        this(backend, pollInterval, baseUrl, projectId, networkClock, wallClock, expectedNetworkMagic, Duration.ofMinutes(5));
     }
 
     private void requireNetworkIdentity(LookupBudget budget) {
@@ -95,10 +102,15 @@ public class BlockfrostChainService implements FacilitatorChainService {
     UtxoLookup openUtxoLookup(LookupBudget budget) {
         Map<String, UtxoState> results = new HashMap<>();
         Map<String, AddressScan> addresses = new HashMap<>();
+        boolean[] tipChecked = {false};
         return (hash, index) -> {
             try {
                 budget.checkDeadline();
                 requireNetworkIdentity(budget);
+                if (!tipChecked[0] && expectedNetworkMagic != null) {
+                    budget.call(this::latestBlock);
+                    tipChecked[0] = true;
+                }
                 String key = outref(hash, index);
                 if (results.containsKey(key)) return results.get(key);
                 Result<Utxo> outputRes = budget.call(() -> backend.getUtxoService().getTxOutput(hash, index));
@@ -165,7 +177,17 @@ public class BlockfrostChainService implements FacilitatorChainService {
             Result<Block> res = backend.getBlockService().getLatestBlock();
             if (!res.isSuccessful() || res.getValue() == null)
                 throw new ChainLookupException("Blockfrost latest block: " + res.getResponse());
-            return res.getValue();
+            Block block = res.getValue();
+            if (block.getSlot() < 0 || block.getHeight() < 0)
+                throw new ChainLookupException("Blockfrost latest block has invalid slot or height");
+            if (networkClock != null) {
+                if (maxTipAge == null || maxTipAge.isNegative() || maxTipAge.isZero())
+                    throw new ChainLookupException("max tip age must be positive");
+                Duration age = Duration.between(networkClock.slotToTime(block.getSlot()), wallClock.instant());
+                if (age.compareTo(maxTipAge) > 0 || age.compareTo(Duration.ofSeconds(-30)) < 0)
+                    throw new ChainLookupException("Blockfrost tip is stale or ahead of wall clock");
+            }
+            return block;
         } catch (ChainLookupException e) {
             throw e;
         } catch (Exception e) {
@@ -197,7 +219,10 @@ public class BlockfrostChainService implements FacilitatorChainService {
 
     @Override
     public SubmissionResult submitTransaction(byte[] txBytes) {
-        try { requireNetworkIdentity(new LookupBudget()); }
+        try {
+            requireNetworkIdentity(new LookupBudget());
+            if (expectedNetworkMagic != null) latestBlock();
+        }
         catch (RuntimeException e) { return new SubmissionResult.NotSubmitted("provider network identity unavailable or mismatched"); }
         String expectedHash;
         try { expectedHash = TransactionUtil.getTxHash(txBytes).toLowerCase(java.util.Locale.ROOT); }
@@ -227,6 +252,7 @@ public class BlockfrostChainService implements FacilitatorChainService {
     public InclusionResult checkInclusion(String txHashHex) {
         try {
             requireNetworkIdentity(new LookupBudget());
+            Block latest = latestBlock();
             Result<TransactionContent> res = backend.getTransactionService().getTransaction(txHashHex);
             if (!res.isSuccessful()) {
                 // Not in a block. It may still be in a mempool, which is the
@@ -234,6 +260,7 @@ public class BlockfrostChainService implements FacilitatorChainService {
                 // client-submitted payment can offer.
                 if (res.code() == 404) return inMempool(txHashHex)
                         ? new InclusionResult.Mempool()
+                        // Blockfrost supplies no indexed-through watermark for these separate indexes.
                         : new InclusionResult.NotSeen();
                 throw new ChainLookupException("Blockfrost getTransaction failed: " + res.getResponse());
             }
@@ -241,13 +268,11 @@ public class BlockfrostChainService implements FacilitatorChainService {
             if (tx == null || tx.getHash() == null || !tx.getHash().equalsIgnoreCase(txHashHex)
                     || !Boolean.TRUE.equals(tx.getValidContract()))
                 throw new ChainLookupException("transaction receipt does not authenticate valid payment outputs");
-            Result<Block> latest = backend.getBlockService().getLatestBlock();
-            if (!latest.isSuccessful())
-                throw new ChainLookupException("Blockfrost latest block: " + latest.getResponse());
             // `l1Confirmations` counts blocks NEWER than the containing block, so
             // a transaction in the tip has depth 0 ("canonical inclusion"), not 1.
-            long depth = latest.getValue().getHeight() - tx.getBlockHeight();
-            if (depth < 0) throw new ChainLookupException("transaction receipt is ahead of canonical tip");
+            long depth = latest.getHeight() - tx.getBlockHeight();
+            if (depth < 0 || tx.getSlot() > latest.getSlot())
+                throw new ChainLookupException("transaction receipt is ahead of canonical tip");
             return new InclusionResult.Included((int) Math.max(depth, 0), tx.getSlot(), tx.getBlock());
         } catch (ChainLookupException e) {
             throw e;
@@ -260,15 +285,14 @@ public class BlockfrostChainService implements FacilitatorChainService {
      * Whether a node is holding this transaction in its mempool.
      *
      * <p>Not on the backend interface, so it goes over raw HTTP. A provider
-     * fault answers "no" rather than throwing: mempool presence only ever
-     * strengthens the evidence, and an outage must not turn a confirmed payment
-     * into a lookup failure.
+     * Only an authoritative 404 proves absence. All other responses are unknown.
      *
      * @param txHashHex the transaction id.
      * @return true when the provider reports it pending.
      */
     private boolean inMempool(String txHashHex) {
-        if (baseUrl == null || !TX_HASH.matcher(txHashHex).matches()) return false;
+        if (baseUrl == null || !TX_HASH.matcher(txHashHex).matches())
+            throw new ChainLookupException("mempool lookup is unavailable");
         try {
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(baseUrl + "mempool/" + txHashHex.toLowerCase()))
@@ -276,53 +300,74 @@ public class BlockfrostChainService implements FacilitatorChainService {
                     .timeout(MEMPOOL_TIMEOUT)
                     .GET()
                     .build();
-            return HTTP.send(request, HttpResponse.BodyHandlers.discarding()).statusCode() == 200;
+            int status = HTTP.send(request, HttpResponse.BodyHandlers.discarding()).statusCode();
+            if (status == 200) return true;
+            if (status == 404) return false;
+            throw new ChainLookupException("mempool lookup returned HTTP " + status);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            return false;
+            throw new ChainLookupException("mempool lookup interrupted", e);
+        } catch (ChainLookupException e) {
+            throw e;
         } catch (Exception e) {
-            log.debug("mempool lookup unavailable for {}: {}", txHashHex, e.getMessage());
-            return false;
+            throw new ChainLookupException("mempool lookup failed", e);
         }
     }
 
     @Override
     public InclusionResult awaitInclusion(String txHashHex, int minDepth, Duration timeout) {
         long deadline = System.currentTimeMillis() + timeout.toMillis();
-        InclusionResult last = new InclusionResult.NotSeen();
+        InclusionResult last = null;
+        ChainLookupException lastFailure = null;
         while (System.currentTimeMillis() < deadline) {
             try {
                 last = checkInclusion(txHashHex);
+                lastFailure = null;
                 if (last instanceof InclusionResult.Included inc && inc.depth() >= minDepth) return last;
                 // Mempool acceptance satisfies -1 and nothing stronger.
                 if (last instanceof InclusionResult.Mempool && minDepth <= -1) return last;
             } catch (ChainLookupException e) {
+                lastFailure = e;
                 log.debug("transient inclusion lookup failure for {}: {}", txHashHex, e.getMessage());
             }
             try {
                 Thread.sleep(pollInterval.toMillis());
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                return last;
+                throw new ChainLookupException("inclusion polling interrupted", e);
             }
         }
+        if (lastFailure != null) throw lastFailure;
+        if (last == null) throw new ChainLookupException("no successful inclusion observation");
         return last;
     }
 
     @Override
     public BackendHealth health() {
-        long now = System.currentTimeMillis();
-        if (now - lastProbeMillis < 30_000) {
-            return lastProbeOk ? BackendHealth.ok() : BackendHealth.down("last Blockfrost probe failed");
+        long now = System.nanoTime();
+        if (lastProbeNanos != 0 && now - lastProbeNanos < Duration.ofSeconds(5).toNanos()) {
+            if (!lastProbeOk) return BackendHealth.down("last Blockfrost probe failed");
+            if (networkClock != null) {
+                Duration age = Duration.between(networkClock.slotToTime(lastProbeSlot), wallClock.instant());
+                if (age.compareTo(maxTipAge) > 0 || age.compareTo(Duration.ofSeconds(-30)) < 0)
+                    return BackendHealth.down("Blockfrost tip is stale or ahead of wall clock");
+            }
+            return BackendHealth.ok();
         }
-        try {
-            requireNetworkIdentity(new LookupBudget());
-            latestBlock();
-            lastProbeOk = true;
-        } catch (RuntimeException e) {
-            lastProbeOk = false;
+        synchronized (this) {
+            now = System.nanoTime();
+            if (lastProbeNanos == 0 || now - lastProbeNanos >= Duration.ofSeconds(5).toNanos()) {
+                try {
+                    requireNetworkIdentity(new LookupBudget());
+                    lastProbeSlot = latestBlock().getSlot();
+                    lastProbeOk = true;
+                } catch (RuntimeException e) {
+                    lastProbeOk = false;
+                }
+                lastProbeNanos = now;
+            }
         }
-        lastProbeMillis = now;
-        return lastProbeOk ? BackendHealth.ok() : BackendHealth.down("Blockfrost unreachable, key invalid, or network identity mismatched");
+        return lastProbeOk ? BackendHealth.ok()
+                : BackendHealth.down("Blockfrost unreachable, stale, or network identity mismatched");
     }
 }

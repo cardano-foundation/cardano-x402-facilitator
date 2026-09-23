@@ -39,7 +39,6 @@ wiring.
 ```
 POST /verify or /settle
   → CorrelationIdFilter      HIGHEST_PRECEDENCE      X-Correlation-Id (generated if absent)
-  → ApiGuardFilter           HIGHEST_PRECEDENCE+10   API key → 401, rate limit → 429  [opt-in]
   → RequestSizeFilter        (unordered ⇒ last)      byte cap → 413
   → FacilitatorController    null checks; registry lookup
   → X402FacilitatorRegistry  (2, "exact", normalize(network)) → handler
@@ -48,12 +47,10 @@ POST /verify or /settle
       └── settle → SettlementGate → SettlementService
 ```
 
-Correlation runs first so every rejection downstream is traceable. `RequestSizeFilter`
-declares **no** `@Order`, so it defaults to `LOWEST_PRECEDENCE` and runs last of
-the three — meaning auth and rate limiting are applied *before* the body size cap.
-That ordering is defensible (an unauthenticated caller is rejected without
-touching the body), but it is a default rather than a decision: nothing pins it,
-and adding `@Order` to another filter could silently reshuffle it.
+Correlation runs first so every rejection downstream is traceable.
+`RequestSizeFilter` enforces the byte cap before controller parsing. The
+facilitator has no application-level API authentication or rate limiter;
+Compose publishes its API on host loopback.
 
 The registry keys on `(scheme, normalized network)` and rejects any
 `x402Version != 2` outright. An unregistered triple returns HTTP 500

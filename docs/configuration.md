@@ -37,9 +37,9 @@ service itself, not the facilitator; see
 | Key | Default | Notes |
 |---|---|---|
 | `server.port` | `4022` | |
-| `spring.datasource.url` | `jdbc:postgresql://localhost:5432/facilitator` | env `DB_URL` |
-| `spring.datasource.username` | `facilitator` | env `DB_USER` |
-| `spring.datasource.password` | `facilitator` | env `DB_PASSWORD` |
+| `spring.datasource.url` | `jdbc:postgresql://localhost:5432/postgres` | env `DB_URL` |
+| `spring.datasource.username` | `postgres` | env `DB_USER` |
+| `spring.datasource.password` | `postgres` (local development only) | env `DB_PASSWORD` |
 | `spring.flyway.enabled` | `false` | Deliberate — see below |
 | `spring.threads.virtual.enabled` | `true` | |
 
@@ -242,37 +242,52 @@ escrow address from the deployment parameters and rejects a `payTo` that does no
 equal it, so a hostile address fails without any allowlist. Set this when you
 want to serve only your own deployment rather than any valid `vested_pay` one.
 
-## Security (opt-in)
+## API exposure
 
-Both off by default, so the facilitator stays open unless you opt in.
+The facilitator does not authenticate or rate-limit HTTP callers. The former
+`x402.security.*`, `FACILITATOR_API_KEY`, and `FACILITATOR_RATE_LIMIT_RPM`
+settings no longer have any effect. Compose publishes the facilitator API only
+on the host's `127.0.0.1:4022`; other containers on its network can still
+connect. A direct JAR launch uses Spring Boot's normal listener settings and
+does not inherit that host binding. Place any remotely reachable deployment
+behind an operator-managed ingress with TLS, authentication, and traffic limits.
+CORS controls browser access, not caller authentication.
 
-| Key | Default | Notes |
-|---|---|---|
-| `x402.security.api-keys` | `[]` | Non-empty ⇒ `X-API-Key` required on `/verify` and `/settle` |
-| `x402.security.rate-limit.requests-per-minute` | `0` | `0` = off. Per authenticated key, otherwise per remote IP (untrusted key headers are ignored) |
+## Provider freshness and readiness
 
-```yaml
-x402:
-  security:
-    api-keys: [ "${FACILITATOR_API_KEY}" ]
-    rate-limit:
-      requests-per-minute: 120
-```
+`x402.chain.max-tip-age` defaults to `5m` for every configured network.
+The provider must report the expected genesis magic and a valid latest block
+whose slot time is no older than this setting and no more than 30 seconds in
+the future. A bad tip fails verification lookup, submission admission, and
+inclusion checks. `/health` and `/actuator/health/readiness` report 503 when
+any required network is unhealthy; optional networks are shown but do not
+bring down overall readiness. Actuator liveness remains independent. Health
+probes are cached for at most five seconds and tip age is rechecked on cache
+hits. The wall-clock current-slot calculation remains offline.
 
-Guards `/verify` and `/settle` only — `/supported`, `/health`, and actuator stay
-open for discovery and probes. The rate limiter is a fixed window per
-wall-clock minute, in-memory (per instance, not shared across replicas), swept
-once per minute to remove prior-minute buckets. Header rotation cannot create buckets
-when authentication is disabled. This bounds retention time, not the number of distinct
-remote IPs within a minute; put distributed admission controls at your ingress.
-Configure trusted proxy address handling at the ingress/container boundary; this filter
-uses the servlet remote address and does not trust caller-supplied forwarding headers.
+The bundled Blockfrost-style provider has no verified watermark showing that
+its transaction index has caught up to its block tip. Even when both the
+transaction and mempool endpoints return 404 after the TTL, it returns
+`NotSeen()` with unknown coverage. The settlement claim remains pending and
+cannot be broadcast again; a previously confirmed row is not demoted by this
+unknown absence. Provider 401, 429, 5xx, timeouts and stale tips also leave
+the journal unchanged. Unobserved rows can occupy reconciliation capacity
+indefinitely until the transaction is found or an independently verified
+index-coverage source is added. Operators must investigate such rows rather
+than delete their claims or manually repeat submission.
+
+Custom `FacilitatorChainService` backends may return
+`NotSeen(observedThroughSlot)` only when they can prove complete transaction
+index coverage through that slot. Terminal expiry additionally requires both
+the observed-through slot and current slot to exceed transaction TTL by 120
+slots. A block tip alone does not satisfy this proof.
 
 ## Environment variables (Compose)
 
 | Var | Default | Used by |
 |---|---|---|
-| `DB_PASSWORD`, `DB_PORT` | `facilitator`, `5432` | postgres |
+| `POSTGRES_ADMIN_PASSWORD` | `postgres` (local development only) | shared PostgreSQL user for the facilitator and Yaci Store |
+| Facilitator API host port | `127.0.0.1:4022` | Compose publishes locally; remote ingress protection is operator-managed |
 | `BLOCKFROST_BASE_URL` | hosted Blockfrost for `CARDANO_NETWORK` | facilitator — point at a standalone yaci-store's Blockfrost-compatible endpoint instead to use it |
 | `BLOCKFROST_PROJECT_ID` | — | facilitator — required for hosted Blockfrost, ignored by yaci-store |
 | `CARDANO_NETWORK` | `preprod` | All Compose profiles: node, indexer magic, Yano and canonical facilitator `X402_NETWORK_ID` |
@@ -297,10 +312,6 @@ x402:
   masumi:
     allowed-script-hashes:
       "cardano:mainnet": [ "${MASUMI_SCRIPT_HASH}" ]
-  security:
-    api-keys: [ "${FACILITATOR_API_KEY}" ]
-    rate-limit:
-      requests-per-minute: 120
   http:
     cors-allowed-origins: [ "https://your-resource-server.example" ]
 ```

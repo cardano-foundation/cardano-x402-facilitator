@@ -5,6 +5,7 @@ import com.bloxbean.cardano.client.backend.blockfrost.service.BFBackendService;
 import com.bloxbean.cardano.client.backend.model.Block;
 import com.bloxbean.cardano.client.backend.model.Genesis;
 import org.cardanofoundation.x402.facilitator.chain.ChainLookupException;
+import org.cardanofoundation.x402.facilitator.chain.ShelleyNetworkClock;
 import org.cardanofoundation.x402.facilitator.model.chain.SubmissionResult;
 import org.cardanofoundation.x402.facilitator.testutil.TestTx;
 import org.junit.jupiter.api.Test;
@@ -22,7 +23,10 @@ class ProviderNetworkIdentityTest {
                 (backend, context) -> {
                     var genesis = new Genesis(); genesis.setNetworkMagic(magic);
                     when(backend.getNetworkInfoService().getNetworkInfo()).thenReturn(Result.success("").withValue(genesis));
-                    when(backend.getBlockService().getLatestBlock()).thenReturn(Result.success("").withValue(new Block()));
+                    var tip = new Block();
+                    tip.setSlot(ShelleyNetworkClock.forNetwork(network, null).expectedSlotAt(java.time.Instant.now()));
+                    tip.setHeight(1);
+                    when(backend.getBlockService().getLatestBlock()).thenReturn(Result.success("").withValue(tip));
                 })) {
             var chain = build(network).chainService();
             assertThat(chain.health().healthy()).isTrue();
@@ -61,6 +65,6 @@ class ProviderNetworkIdentityTest {
     private ChainBackendFactory.ChainBackend build(String network) {
         var entry = new X402Properties.NetworkEntry(network, true,
                 new X402Properties.ChainConfig(new X402Properties.Blockfrost("https://example.invalid/", "")), null);
-        return new ChainBackendFactory().build(entry, new X402Properties(List.of(entry), null, null, null, null, null, null));
+        return new ChainBackendFactory().build(entry, new X402Properties(List.of(entry), null, null, null, null, null));
     }
 }

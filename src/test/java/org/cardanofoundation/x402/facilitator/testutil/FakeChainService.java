@@ -31,6 +31,8 @@ public class FakeChainService implements FacilitatorChainService, ProtocolParams
     /** per-hash inclusion depth override; falls back to includedDepth. */
     public final Map<String, Integer> inclusionDepthByHash = new HashMap<>();
     public long currentSlot = 999_700L; // fixture ttl 1_000_000 sits 300 slots ahead: inside rule 7's maxTimeoutSeconds window
+    /** Null follows wall slot; set a lower provider tip to model indexer lag. */
+    public Long observedTipSlot;
     public BigInteger coinsPerUtxoByte = BigInteger.valueOf(4310);
     public int maxTxSize = 16384;
     public boolean throwOnLookup = false;
@@ -82,7 +84,8 @@ public class FakeChainService implements FacilitatorChainService, ProtocolParams
     public InclusionResult checkInclusion(String txHashHex) {
         if (throwOnInclusionCheck) throw new ChainLookupException("inclusion lookup down");
         int depth = inclusionDepthByHash.getOrDefault(txHashHex.toLowerCase(), includedDepth);
-        if (depth <= NOT_SEEN) return new InclusionResult.NotSeen();
+        if (depth <= NOT_SEEN) return new InclusionResult.NotSeen(
+                observedTipSlot == null ? currentSlot : observedTipSlot);
         if (depth == MEMPOOL) return new InclusionResult.Mempool();
         return new InclusionResult.Included(depth, currentSlot, "blockhash");
     }
@@ -95,7 +98,7 @@ public class FakeChainService implements FacilitatorChainService, ProtocolParams
             if (r instanceof InclusionResult.Mempool && minDepth <= MEMPOOL) return r;
             return r;
         } catch (ChainLookupException e) {
-            return new InclusionResult.NotSeen();
+            throw e;
         }
     }
 

@@ -8,6 +8,7 @@ import org.cardanofoundation.x402.facilitator.chain.ShelleyNetworkClock;
 import org.cardanofoundation.x402.facilitator.chain.blockfrost.BlockfrostChainService;
 import org.cardanofoundation.x402.facilitator.chain.blockfrost.BlockfrostProtocolParamsProvider;
 import org.springframework.stereotype.Component;
+import org.springframework.beans.factory.annotation.Value;
 
 import java.time.Duration;
 import java.time.Clock;
@@ -22,6 +23,12 @@ import java.time.Clock;
  */
 @Component
 public class ChainBackendFactory {
+    private Duration maxTipAge = Duration.ofMinutes(5);
+
+    @Value("${x402.chain.max-tip-age:PT5M}")
+    public void setMaxTipAge(Duration maxTipAge) {
+        this.maxTipAge = maxTipAge;
+    }
 
     public record ChainBackend(FacilitatorChainService chainService,
                                ProtocolParamsProvider paramsProvider,
@@ -48,7 +55,8 @@ public class ChainBackendFactory {
         };
         return new ChainBackend(
                 new BlockfrostChainService(backend, pollInterval, baseUrl,
-                        bf.projectId() == null ? "" : bf.projectId(), clock, Clock.systemUTC(), networkMagic),
+                        bf.projectId() == null ? "" : bf.projectId(), clock, Clock.systemUTC(), networkMagic,
+                        maxTipAge),
                 new BlockfrostProtocolParamsProvider(backend),
                 clock);
     }

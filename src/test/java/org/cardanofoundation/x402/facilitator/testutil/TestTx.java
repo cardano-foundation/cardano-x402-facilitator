@@ -112,6 +112,11 @@ public final class TestTx {
 
     /** Builds a signed (or unsigned) tx: input = NONCE utxo (+extras), output0 = payment, output1 = change. */
     public static String buildBase64(Spec spec) {
+        return buildBase64WithChangeAddress(spec, PAYER_ADDRESS);
+    }
+
+    /** Allows a signed, balanced invalid-output fixture without changing the seller payment. */
+    public static String buildBase64WithChangeAddress(Spec spec, String changeAddress) {
         try {
             List<TransactionInput> inputs = new ArrayList<>();
             inputs.add(new TransactionInput(NONCE_TX_HASH, 0));
@@ -120,7 +125,7 @@ public final class TestTx {
                     .address(spec.payTo())
                     .value(Value.builder().coin(spec.amount()).build()).build();
             TransactionOutput change = TransactionOutput.builder()
-                    .address(PAYER_ADDRESS)
+                    .address(changeAddress)
                     .value(Value.builder().coin(BigInteger.valueOf(9_800_000L).subtract(spec.amount())).build()).build();
             TransactionBody.TransactionBodyBuilder body = TransactionBody.builder()
                     .inputs(inputs).outputs(List.of(payment, change))

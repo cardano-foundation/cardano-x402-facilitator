@@ -1,7 +1,8 @@
 package org.cardanofoundation.x402.facilitator.controller;
 
 import lombok.RequiredArgsConstructor;
-import org.cardanofoundation.x402.facilitator.config.X402Properties;
+import org.cardanofoundation.x402.facilitator.config.ChainReadiness;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -13,15 +14,14 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class HealthController {
 
-    private final X402Properties props;
+    private final ChainReadiness readiness;
 
     @GetMapping("/health")
-    public Map<String, Object> health() {
+    public ResponseEntity<Map<String, Object>> health() {
+        ChainReadiness.Snapshot snapshot = readiness.snapshot();
         Map<String, Object> body = new LinkedHashMap<>();
-        body.put("status", "ok");
-        body.put("networks", props.networks().stream()
-                .map(n -> Map.of("id", n.id(), "required", n.isRequired()))
-                .toList());
-        return body;
+        body.put("status", snapshot.ready() ? "ok" : "unavailable");
+        body.put("networks", snapshot.networks());
+        return ResponseEntity.status(snapshot.ready() ? 200 : 503).body(body);
     }
 }

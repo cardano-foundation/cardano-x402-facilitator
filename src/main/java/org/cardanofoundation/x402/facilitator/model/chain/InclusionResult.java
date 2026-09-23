@@ -3,7 +3,10 @@ package org.cardanofoundation.x402.facilitator.model.chain;
 /** One-shot inclusion answer. Lookup errors THROW — an error is never absence. */
 public sealed interface InclusionResult {
 
-    record NotSeen() implements InclusionResult {
+    /** Proven complete transaction-index coverage through this slot; -1 means no expiry-grade proof.
+     * A block tip alone does not establish transaction-index coverage. */
+    record NotSeen(long observedThroughSlot) implements InclusionResult {
+        public NotSeen() { this(-1); }
     }
 
     /**

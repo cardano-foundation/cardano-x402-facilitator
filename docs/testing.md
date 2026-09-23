@@ -99,12 +99,12 @@ export JAVA_HOME=/Library/Java/JavaVirtualMachines/temurin-21.jdk/Contents/Home
 BLOCKFROST_PROJECT_ID=preprod... E2E_MNEMONIC="..." ./gradlew e2e
 ```
 
-Configuration, all env-overridable:
+Configuration:
 
 | Var | Default | Notes |
 |---|---|---|
-| `BLOCKFROST_PROJECT_ID` | *(preprod test key in source)* | |
-| `E2E_MNEMONIC` | *(preprod test wallet in source)* | Payer; needs funds |
+| `BLOCKFROST_PROJECT_ID` | required | Provider credential |
+| `E2E_MNEMONIC` | required | Dedicated testnet payer; needs funds |
 | `E2E_BACKEND_URL` | preprod Blockfrost | Repoint for devnet |
 | `FACILITATOR_URL` | `http://localhost:4022` | |
 | `E2E_NETWORK` | `cardano:preprod` | |
@@ -114,10 +114,10 @@ Payer is the mnemonic's address index 0, receiver is index 1, so the wallet pays
 itself and only fees are consumed. Fund index 0 from the [preprod
 faucet](https://docs.cardano.org/cardano-testnets/tools/faucet).
 
-> **The committed defaults are throwaway preprod credentials.** They are
-> testnet-only, not a pattern to copy for any other use. Never point this at
-> mainnet, never commit a funded mnemonic, and rotate these before any
-> non-test use. Always pass `E2E_MNEMONIC` / `BLOCKFROST_PROJECT_ID` explicitly.
+No credentials are embedded in the harness. Rotate the previously committed
+preprod project ID and mnemonic at their provider/wallet; removing them from
+source does not revoke their historical exposure. Pass both required variables
+through a local secret store, and use a dedicated testnet wallet.
 
 ### Reading the result
 

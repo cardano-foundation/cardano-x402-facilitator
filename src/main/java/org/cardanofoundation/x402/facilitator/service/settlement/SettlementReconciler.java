@@ -112,6 +112,9 @@ public class SettlementReconciler {
             return;
         }
         if (rec.status() == Status.CONFIRMED && selected != null) {
+            if (inc instanceof InclusionResult.NotSeen absent
+                    && (absent.observedThroughSlot() < 0 || rec.confirmedSlot() == null
+                        || absent.observedThroughSlot() < rec.confirmedSlot())) return;
             repo.recordObservation(rec, Status.SUBMITTED, Map.of());
             return;
         }
@@ -122,14 +125,16 @@ public class SettlementReconciler {
             return;
         }
         // Mempool observations are not absence. Neither age nor missing TTL proves a transaction dead.
-        if (!(inc instanceof InclusionResult.NotSeen) || rec.txTtlSlot() == null) return;
+        if (!(inc instanceof InclusionResult.NotSeen absent) || rec.txTtlSlot() == null) return;
         long currentSlot;
         try {
             currentSlot = chain.getCurrentSlot();
         } catch (ChainLookupException e) {
             return;
         }
-        if (currentSlot > rec.txTtlSlot() && currentSlot - rec.txTtlSlot() > TTL_SAFETY_MARGIN_SLOTS) {
+        if (currentSlot > rec.txTtlSlot() && currentSlot - rec.txTtlSlot() > TTL_SAFETY_MARGIN_SLOTS
+                && absent.observedThroughSlot() > rec.txTtlSlot()
+                && absent.observedThroughSlot() - rec.txTtlSlot() > TTL_SAFETY_MARGIN_SLOTS) {
             repo.recordObservation(rec, Status.EXPIRED, Map.of());
         }
     }
