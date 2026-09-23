@@ -47,4 +47,5 @@ for network, magic in [('preprod', 1), ('preview', 2), ('mainnet', 764824073)]:
     assert int(services['yaci-store']['environment']['STORE_CARDANO_PROTOCOL_MAGIC']) == magic
     if network != 'preprod':
         assert str(services['yaci-store']['environment'].get('STORE_CARDANO_SYNC_START_SLOT', '0')) == '0'
+        assert services['yaci-store']['environment'].get('STORE_CARDANO_SYNC_START_BLOCKHASH', '') == ''
     print(f'{network}: facilitator IDs, hosted URL, node, indexer magic and Yano agree')
