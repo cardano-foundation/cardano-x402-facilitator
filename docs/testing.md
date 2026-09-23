@@ -1,11 +1,12 @@
 # Testing
 
-Three layers, in increasing order of what they prove:
+Four layers, in increasing order of what they prove:
 
 | Layer | Command | Needs | Proves |
 |---|---|---|---|
 | Unit + slice | `./gradlew test` | nothing | Rules, wire shapes, state machine |
 | Postgres IT | `./gradlew test` | Docker | Real CAS/claim semantics |
+| TypeScript HTTP interop | `./gradlew interop` | Node + `npm ci --prefix interop` | Published SDKs accept Java HTTP responses and signed payments |
 | **On-chain E2E** | `./gradlew e2e` | funded wallet + running facilitator | It actually works |
 
 Java 21 is required:
@@ -21,10 +22,10 @@ export JAVA_HOME=/Library/Java/JavaVirtualMachines/temurin-21.jdk/Contents/Home
 JAVA_HOME=/Library/Java/JavaVirtualMachines/temurin-21.jdk/Contents/Home ./gradlew test
 ```
 
-166 tests, no network access, no credentials. The bulk sits in
-`ExactCardanoVerifyTest` (the A–E pipeline), `MasumiTransferVerifierTest`
-(M0–M9), `ExactCardanoSettleTest` (the state machine), `ScriptTransferVerifierTest`,
-and `ClientSubmissionTest` (client vs. server submission).
+No live-chain access or credentials are needed for the automated suite. Tests
+cover ordinary verification, strict Masumi schema/signatures, script descriptors,
+provider evidence, durable settlement, and V1 upgrade behavior. PostgreSQL tests
+require Docker.
 
 `FakeChainService` (`testutil/`) drives every `UtxoState` / `InclusionResult` /
 `SubmissionResult` branch — including the `Unknown` paths, which are the ones you
@@ -45,6 +46,30 @@ silently changed — do not "fix" the vectors.
 `SettlementPostgresIT` uses Testcontainers, so **Docker must be running**. It
 exercises the CAS transitions against real Postgres; H2 won't catch the
 concurrency semantics the reconciler depends on.
+
+## TypeScript interoperability
+
+```bash
+npm ci --prefix interop --ignore-scripts
+./gradlew interop
+```
+
+This starts a loopback-only Java server with the real controller, verifier,
+settlement service and migrated H2 journal. Chain input quantities, submission
+outcomes and inclusion evidence are controlled by test-only routes. The
+published `HTTPFacilitatorClient` and `x402ResourceServer` from `@x402/core` 2.26.0
+call its actual HTTP endpoints. Assertions cover capabilities, all three transfer
+methods, ADA/tokens, network aliases, the automatic pending retry, provider
+outages, rollback, rejection and exactly one broadcast.
+
+`interop/fixtures.mjs` independently creates eight signed payment vectors using
+`@x402/cardano` 2.26.0 and Evolution, verifies them against the TypeScript
+facilitator, and checks ten mutated rejection cases before writing
+`src/test/resources/upstream/payments.json`. Regenerate
+with `npm run fixtures --prefix interop`. The seed is a public BIP-39 test vector;
+no live provider or funded wallet is used. Java also checks the resulting Masumi
+commitments and JCS digests. See [compatibility notes](upstream-compatibility.md)
+for the precise upstream commit and behavioral boundaries.
 
 ## The on-chain E2E proof
 
@@ -105,7 +130,7 @@ ON-CHAIN CONFIRMED: tx <hash> in block <block>
 
 Two outcomes are **not** failures:
 
-- `success: false` with `errorReason: exact_cardano_settlement_not_confirmed` —
+- `success: false` with `errorReason: settlement_pending` —
   the tx was broadcast and confirmation timed out. The harness keeps polling the
   chain for up to 5 minutes, because a timeout is not a rejection.
 - Any other `/settle` failure **is** a hard failure and throws.
@@ -128,10 +153,6 @@ flow without faucet funds or preprod latency.
   so it isn't exercised end-to-end. The facilitator-side code path is the same
   `BlockfrostChainService` already proven by the on-chain E2E test against
   hosted Blockfrost — only the full stack's integration is unproven.
-- **Client submission on-chain.** `X402PreprodE2E` exercises server submission
-  only. The client-mode paths — inclusion evidence, mempool evidence, and
-  settling without re-broadcasting — are covered against `FakeChainService`, not
-  against a real provider.
 - **Mainnet.** Nothing here has run against mainnet.
 
 ## Before committing
@@ -143,4 +164,7 @@ without it is worthless.
 JAVA_HOME=/Library/Java/JavaVirtualMachines/temurin-21.jdk/Contents/Home ./gradlew test
 ```
 
-Expect `BUILD SUCCESSFUL`, 166 tests, 0 failures.
+Expect `BUILD SUCCESSFUL` with no test failures.
+
+For the complete upgrade gate, run `./gradlew clean test bootJar interop` after
+installing the pinned interop dependencies.

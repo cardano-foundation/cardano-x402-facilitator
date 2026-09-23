@@ -132,7 +132,7 @@ class ExactCardanoVerifyTest {
         PaymentRequirements req = requirements("cardano:preprod", TestTx.PAY_TO, "2.5", "lovelace");
         VerifyResponse r = scheme.verify(
                 payload(TestTx.buildBase64(TestTx.Spec.defaults()), TestTx.NONCE, req), req);
-        assertThat(r.invalidReason()).isEqualTo(ErrorCodes.INVALID_PAYLOAD);
+        assertThat(r.invalidReason()).isEqualTo(ErrorCodes.REQUIREMENTS_INVALID);
     }
 
     @Test
@@ -140,7 +140,7 @@ class ExactCardanoVerifyTest {
         PaymentRequirements req = requirements("cardano:preprod", TestTx.PAY_TO, "-2000000", "lovelace");
         VerifyResponse r = scheme.verify(
                 payload(TestTx.buildBase64(TestTx.Spec.defaults()), TestTx.NONCE, req), req);
-        assertThat(r.invalidReason()).isEqualTo(ErrorCodes.INVALID_PAYLOAD);
+        assertThat(r.invalidReason()).isEqualTo(ErrorCodes.REQUIREMENTS_INVALID);
     }
 
     @Test
@@ -148,7 +148,7 @@ class ExactCardanoVerifyTest {
         PaymentRequirements req = requirements("cardano:preprod", TestTx.PAY_TO, "2000000", "not-an-asset");
         VerifyResponse r = scheme.verify(
                 payload(TestTx.buildBase64(TestTx.Spec.defaults()), TestTx.NONCE, req), req);
-        assertThat(r.invalidReason()).isEqualTo(ErrorCodes.INVALID_PAYLOAD);
+        assertThat(r.invalidReason()).isEqualTo(ErrorCodes.REQUIREMENTS_INVALID);
     }
 
     @Test
@@ -192,6 +192,35 @@ class ExactCardanoVerifyTest {
         PaymentRequirements req = requirements("cardano:preprod", TestTx.PAY_TO, "2000000", "lovelace");
         VerifyResponse r = scheme.verify(payload(TestTx.buildBase64WithBadSignature(), TestTx.NONCE, req), req);
         assertThat(r.invalidReason()).isEqualTo(ErrorCodes.INVALID_SIGNATURE);
+    }
+
+    @Test
+    void rejectsMissingTtlForFreshPayment() {
+        var req = requirements("cardano:preprod", TestTx.PAY_TO, "2000000", "lovelace");
+        var tx = TestTx.buildBase64(TestTx.Spec.defaults().withTtl(null));
+        assertThat(scheme.verify(payload(tx, TestTx.NONCE, req), req).invalidReason())
+                .isEqualTo(ErrorCodes.INVALID_PAYLOAD);
+    }
+
+    @Test
+    void requiresPositiveTimeoutForFreshPayment() {
+        for (Integer timeout : new Integer[]{null, 0, -1}) {
+            var req = new PaymentRequirements("exact", "cardano:preprod", "lovelace", "2000000",
+                    TestTx.PAY_TO, timeout, Map.of("assetTransferMethod", "default"));
+            var tx = TestTx.buildBase64(TestTx.Spec.defaults());
+            assertThat(scheme.verify(payload(tx, TestTx.NONCE, req), req).invalidReason())
+                    .as("timeout %s", timeout).isEqualTo(ErrorCodes.REQUIREMENTS_INVALID);
+        }
+    }
+
+    @Test
+    void authenticatedBroadcastRetainsLegacyMissingExpirySemantics() {
+        var req = new PaymentRequirements("exact", "cardano:preprod", "lovelace", "2000000",
+                TestTx.PAY_TO, null, Map.of("assetTransferMethod", "default"));
+        var tx = TestTx.buildBase64(TestTx.Spec.defaults().withTtl(null));
+        chain.currentSlot = 2_000_000L;
+        assertThat(scheme.verifyBroadcast(payload(tx, TestTx.NONCE, req), req, TestTx.PAYER_ADDRESS)
+                .isValid()).isTrue();
     }
 
     @Test

@@ -65,9 +65,9 @@ public class FacilitatorController {
         if (handler.isEmpty()) {
             return unregistered(req.paymentRequirements());
         }
-        // Don't accept a settlement we can't confirm — a blind backend means
-        // submit-then-confirm is unreliable, so signal a retryable 503.
-        if (!settlementGate.isHealthy(req.paymentRequirements().network())) {
+        // Fresh submissions require a healthy backend. Journaled retries must
+        // reach settlement so uncertain broadcasts retain a protocol pending response.
+        if (!settlementGate.isHealthy(req.paymentRequirements().network(), req.paymentPayload())) {
             return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(SettleResponse.fail(
                     ErrorCodes.CHAIN_LOOKUP_FAILED, "settlement backend unhealthy",
                     req.paymentRequirements().network()));

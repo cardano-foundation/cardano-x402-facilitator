@@ -58,17 +58,14 @@ public class X402FacilitatorRegistry {
     private Map<String, Object> cardanoCapabilities() {
         Map<String, Object> extra = new LinkedHashMap<>();
         extra.put("assetTransferMethods", List.of("default", "masumi", "script"));
-        // Hydra needs head-authenticated evidence this facilitator cannot produce.
-        extra.put("settlementLayers", List.of("l1"));
         // The client builds and signs the whole transaction, balancing the fee
         // against its own inputs; this facilitator only broadcasts.
         extra.put("areFeesSponsored", false);
-        extra.put("submissionModes", List.of("server", "client"));
         // -1 is mempool evidence, which this facilitator can read but refuses to
         // settle on unless the operator opted in — so the advertised floor moves
         // with that setting rather than promising evidence it would reject.
         Map<String, Object> range = Map.of("minimum", acceptMempool ? -1 : 0, "maximum", 20);
-        extra.put("l1Confirmations", Map.of("server", range, "client", range));
+        extra.put("l1Confirmations", range);
         return extra;
     }
 }

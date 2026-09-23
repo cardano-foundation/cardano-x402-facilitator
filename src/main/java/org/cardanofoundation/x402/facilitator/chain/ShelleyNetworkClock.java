@@ -1,6 +1,5 @@
 package org.cardanofoundation.x402.facilitator.chain;
 
-import lombok.RequiredArgsConstructor;
 import org.cardanofoundation.x402.facilitator.config.X402Properties;
 import org.cardanofoundation.x402.facilitator.service.registry.CardanoNetworks;
 
@@ -13,12 +12,18 @@ import java.time.Instant;
  *   preview: zeroSlot       0, zeroTime 1666656000000 ms
  * slotLength 1000 ms for all three. Config-overridable per network entry.
  */
-@RequiredArgsConstructor
 public final class ShelleyNetworkClock implements NetworkClock {
 
     private final long zeroSlot;
     private final long zeroTimeMs;
     private final long slotLengthMs;
+
+    public ShelleyNetworkClock(long zeroSlot, long zeroTimeMs, long slotLengthMs) {
+        if (slotLengthMs <= 0) throw new IllegalArgumentException("slotLengthMs must be positive");
+        this.zeroSlot = zeroSlot;
+        this.zeroTimeMs = zeroTimeMs;
+        this.slotLengthMs = slotLengthMs;
+    }
 
     public static ShelleyNetworkClock forNetwork(String network, X402Properties.SlotConfig override) {
         if (override != null && override.zeroSlot() != null && override.zeroTimeEpochSeconds() != null) {
@@ -35,7 +40,7 @@ public final class ShelleyNetworkClock implements NetworkClock {
 
     @Override
     public long expectedSlotAt(Instant wallClock) {
-        return zeroSlot + (wallClock.toEpochMilli() - zeroTimeMs) / slotLengthMs;
+        return zeroSlot + Math.floorDiv(wallClock.toEpochMilli() - zeroTimeMs, slotLengthMs);
     }
 
     @Override

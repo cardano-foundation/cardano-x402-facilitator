@@ -4,6 +4,7 @@ import org.cardanofoundation.x402.facilitator.config.ChainBackendFactory.ChainBa
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.time.Instant;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -30,5 +31,9 @@ class ChainBackendFactoryTest {
         assertThat(backend.chainService()).isNotNull();
         assertThat(backend.paramsProvider()).isNotNull();
         assertThat(backend.networkClock()).isNotNull();
+        long before = backend.networkClock().expectedSlotAt(Instant.now());
+        long slot = backend.chainService().getCurrentSlot();
+        long after = backend.networkClock().expectedSlotAt(Instant.now());
+        assertThat(slot).isBetween(before, after); // No provider request needed to compute the current slot.
     }
 }

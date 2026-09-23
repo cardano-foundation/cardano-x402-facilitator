@@ -56,4 +56,34 @@ class CardanoTransactionDecoderTest {
         DecodedTransaction noTtl = decoder.decode(TestTx.buildBase64(TestTx.Spec.defaults().withTtl(null)));
         assertThat(noTtl.ttlSlot()).isNull();
     }
+
+    @Test void rawInputIndexCannotWrapToNonceZero() throws Exception {
+        assertRawMutationRejected(body -> {
+            var input = (co.nstant.in.cbor.model.Array) ((co.nstant.in.cbor.model.Array) body.get(new co.nstant.in.cbor.model.UnsignedInteger(0))).getDataItems().getFirst();
+            input.getDataItems().set(1,new co.nstant.in.cbor.model.UnsignedInteger(new BigInteger("4294967296")));
+        });
+    }
+    @Test void rawNetworkIdCannotWrapToTestnet() throws Exception {
+        assertRawMutationRejected(body -> body.put(new co.nstant.in.cbor.model.UnsignedInteger(15),
+                new co.nstant.in.cbor.model.UnsignedInteger(new BigInteger("4294967296"))));
+    }
+    @Test void duplicateBodyKeysAreRejected() throws Exception {
+        byte[] raw = Base64.getDecoder().decode(TestTx.buildBase64(TestTx.Spec.defaults().unsigned()));
+        byte[] body = TransactionUtil.extractTransactionBodyFromTx(raw);
+        assertThat(body[0] & 255).isBetween(160,182);
+        var bytes = new java.io.ByteArrayOutputStream();
+        bytes.write(raw[0]); bytes.write(body[0]+1); bytes.write(body,1,body.length-1);
+        bytes.write(2); bytes.write(1); // duplicate fee key, hidden by permissive map decoding
+        bytes.write(raw,1+body.length,raw.length-1-body.length);
+        assertThatThrownBy(() -> decoder.decode(Base64.getEncoder().encodeToString(bytes.toByteArray())))
+                .isInstanceOf(CardanoTransactionDecoder.TransactionDecodeException.class);
+    }
+    private void assertRawMutationRejected(java.util.function.Consumer<co.nstant.in.cbor.model.Map> mutate) throws Exception {
+        var envelope = (co.nstant.in.cbor.model.Array) co.nstant.in.cbor.CborDecoder.decode(
+                Base64.getDecoder().decode(TestTx.buildBase64(TestTx.Spec.defaults().unsigned()))).getFirst();
+        mutate.accept((co.nstant.in.cbor.model.Map) envelope.getDataItems().getFirst());
+        var bytes = new java.io.ByteArrayOutputStream(); new co.nstant.in.cbor.CborEncoder(bytes).encode(envelope);
+        assertThatThrownBy(() -> decoder.decode(Base64.getEncoder().encodeToString(bytes.toByteArray())))
+                .isInstanceOf(CardanoTransactionDecoder.TransactionDecodeException.class);
+    }
 }

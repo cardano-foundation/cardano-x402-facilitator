@@ -22,9 +22,13 @@ public class StartupValidation implements InitializingBean {
         if (props.networks() == null || props.networks().isEmpty()) {
             throw new IllegalStateException("x402.networks must contain at least one network entry");
         }
+        java.util.Set<String> networks = new java.util.HashSet<>();
         for (X402Properties.NetworkEntry entry : props.networks()) {
             if (!CardanoNetworks.isSupported(entry.id())) {
                 throw new IllegalStateException("Unsupported network id: " + entry.id());
+            }
+            if (!networks.add(CardanoNetworks.normalize(entry.id()))) {
+                throw new IllegalStateException("Duplicate canonical network: " + CardanoNetworks.normalize(entry.id()));
             }
             if (entry.chain() == null || entry.chain().blockfrost() == null
                     || entry.chain().blockfrost().baseUrl() == null) {

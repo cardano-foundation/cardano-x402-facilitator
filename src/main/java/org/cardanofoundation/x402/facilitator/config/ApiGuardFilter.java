@@ -55,7 +55,7 @@ public class ApiGuardFilter extends OncePerRequestFilter {
             return;
         }
         if (requestsPerMinute > 0) {
-            String bucket = apiKey != null ? "k:" + apiKey : "ip:" + request.getRemoteAddr();
+            String bucket = !apiKeys.isEmpty() ? "k:" + apiKey : "ip:" + request.getRemoteAddr();
             if (overLimit(bucket)) {
                 response.setHeader("Retry-After", "60");
                 response.sendError(429, "rate limit exceeded");

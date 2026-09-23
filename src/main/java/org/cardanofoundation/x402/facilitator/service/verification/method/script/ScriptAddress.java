@@ -71,16 +71,16 @@ public final class ScriptAddress {
         Object scriptObj = extra == null ? null : extra.get("script");
         if (scriptObj instanceof Map<?, ?> script && script.get("code") != null) {
             String type = String.valueOf(script.get("type"));
-            String code = String.valueOf(script.get("code"));
+            if (!(script.get("code") instanceof String code) || code.isEmpty()
+                    || code.length() > 131072 || !code.matches("(?:[0-9a-f]{2})+"))
+                throw new IllegalArgumentException("script code is invalid or exceeds 64 KiB");
             ListPlutusData params = ListPlutusData.builder()
                     .plutusDataList(orderedParamValues(extra.get("parameters"))).build();
             String applied = AikenScriptUtil.applyParamToScript(params, code);
             return scriptHashHex(type, cborWrap(applied));
         }
         Object scriptHash = extra == null ? null : extra.get("scriptHash");
-        if (scriptHash != null) {
-            return String.valueOf(scriptHash).toLowerCase();
-        }
+        if (scriptHash instanceof String hash && hash.matches("[0-9a-f]{56}")) return hash;
         throw new IllegalArgumentException("Cardano script payment requires either `script` or `scriptHash`");
     }
 
@@ -116,7 +116,16 @@ public final class ScriptAddress {
      */
     static List<PlutusData> orderedParamValues(Object parametersObj) {
         List<PlutusData> out = new ArrayList<>();
-        if (!(parametersObj instanceof Map<?, ?> parameters)) return out;
+        if (parametersObj == null) return out;
+        if (!(parametersObj instanceof Map<?, ?> parameters))
+            throw new IllegalArgumentException("parameters must be an object");
+        if (parameters.size() > 64) throw new IllegalArgumentException("too many script parameters");
+        long bytes = 0;
+        for (Map.Entry<?, ?> entry : parameters.entrySet()) {
+            if (!(entry.getKey() instanceof String key)) throw new IllegalArgumentException("parameter name must be a string");
+            bytes += key.getBytes(StandardCharsets.UTF_8).length + parameterInputBytes(entry.getValue());
+            if (bytes > 65536) throw new IllegalArgumentException("script parameters exceed 64 KiB");
+        }
         TreeMap<Long, Object> arrayKeyed = new TreeMap<>();
         List<Object> stringKeyed = new ArrayList<>();
         for (Map.Entry<?, ?> e : parameters.entrySet()) {
@@ -142,6 +151,48 @@ public final class ScriptAddress {
         } catch (NumberFormatException e) {
             return null;
         }
+    }
+
+    private static int parameterInputBytes(Object descriptor) {
+        if (!(descriptor instanceof Map<?, ?> p) || !(p.get("type") instanceof String type))
+            throw new IllegalArgumentException("parameter must have a type");
+        Object value = p.get("value");
+        return switch (type) {
+            case "bytes" -> {
+                if (!(value instanceof String hex) || hex.length() > 131072 || !hex.matches("(?:[0-9a-f]{2})*"))
+                    throw new IllegalArgumentException("bytes must be lowercase even hex");
+                yield hex.length() / 2;
+            }
+            case "string" -> {
+                if (!(value instanceof String text) || text.length() > 65536)
+                    throw new IllegalArgumentException("string parameter must be a bounded string");
+                yield text.getBytes(StandardCharsets.UTF_8).length;
+            }
+            case "bigint", "integer" -> {
+                String decimal;
+                if (value instanceof java.math.BigInteger n) decimal = n.toString();
+                else if (value instanceof Number n) {
+                    java.math.BigDecimal number;
+                    try { number = new java.math.BigDecimal(n.toString()); }
+                    catch (NumberFormatException e) { throw new IllegalArgumentException("integer must be finite",e); }
+                    if (number.abs().compareTo(new java.math.BigDecimal("9007199254740991")) > 0)
+                        throw new IllegalArgumentException("integer must be safe");
+                    try { decimal = number.toBigIntegerExact().toString(); }
+                    catch (ArithmeticException e) { throw new IllegalArgumentException("integer must be whole",e); }
+                } else if (value instanceof String text) decimal = text;
+                else throw new IllegalArgumentException("integer must be a canonical decimal");
+                if (decimal.length() > 129 || !decimal.matches("(?:0|[1-9][0-9]*|-[1-9][0-9]*)"))
+                    throw new IllegalArgumentException("integer must be a canonical decimal");
+                int digits = decimal.startsWith("-") ? decimal.length()-1 : decimal.length();
+                if (digits > 128) throw new IllegalArgumentException("integer exceeds 128 digits");
+                yield digits;
+            }
+            case "boolean" -> {
+                if (!(value instanceof Boolean)) throw new IllegalArgumentException("boolean parameter must be boolean");
+                yield 1;
+            }
+            default -> throw new IllegalArgumentException("unsupported script parameter type");
+        };
     }
 
     /** Converts a typed script-parameter descriptor into Plutus data. */

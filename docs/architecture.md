@@ -72,7 +72,7 @@ know which backend they're on:
 | Type | Purpose |
 |---|---|
 | `FacilitatorChainService` | UTxO state, current slot, submit, inclusion, health |
-| `ProtocolParamsProvider` | min-UTxO coefficient, max tx size |
+| `ProtocolParamsProvider` | min-UTxO coefficient, max tx size, minimum fee coefficient and constant |
 | `NetworkClock` | slot ↔ POSIX time (Masumi deadlines) |
 
 ### `UtxoState` is tri-state
@@ -84,11 +84,11 @@ bugs — into `Spent` rejects honest payments, into `Unspent` accepts replays. S
 `SubmissionResult.Unknown`: a submission that *might* have been broadcast never
 releases the claim.
 
-`Spent` carries the owner address too. The producing transaction names the owner
-whether or not the output still exists, and client-submitted payments need it:
-by the time the facilitator sees one, the payment has already consumed its own
-nonce, so the payer cannot be read from a live UTXO. A null owner means the
-output was never created at all.
+`Unspent` carries the owner plus lovelace and native-asset quantities. Fresh
+verification requires these quantities to check conservation. `Spent` retains the
+historical owner where available, so a proven broadcast can be authenticated
+without pretending its consumed input is still unspent. New-format journal rows
+also retain the payer established before submission.
 
 ### `InclusionResult` is the evidence ladder
 
@@ -141,81 +141,52 @@ Settlement can't be request-scoped: a tx may land after the HTTP response, the
 process may die mid-submit, and a confirmed block may roll back. So state is
 journalled in Postgres and swept asynchronously.
 
-### State machine
+### State and claims
 
-```
-                 ┌──────────────────────────────────┐
-   insert/reclaim│                                  │
-        │        ▼                                  │
-        └──▶ CLAIMED ──▶ SUBMITTING ──▶ SUBMITTED ──┼──▶ CONFIRMED
-                             │              │       │        │
-                             │              └──▶ NOT_CONFIRMED
-                             │                     │       (rollback)
-                             ▼                     │          │
-                          FAILED              EXPIRED ◀───────┘
-```
+A fresh payment is verified, then atomically claims its transaction hash and,
+for Masumi, seller-signed terms digest in the same database row. `SUBMITTING` is
+persisted before any wire I/O. Every ownership transition is fenced by attempt
+ID and expected status.
 
 | Status | Meaning |
 |---|---|
-| `CLAIMED` | Journalled, nothing on the wire yet |
-| `SUBMITTING` | About to hit the wire — persisted **before** the call |
-| `SUBMITTED` | Node accepted it (or, in client mode, the payer already broadcast) |
-| `NOT_CONFIRMED` | Broadcast, confirmation timed out — **may still land** |
-| `CONFIRMED` | Included at `confirmation-depth` |
-| `FAILED` | Rejected or never broadcast |
-| `EXPIRED` | Past TTL (+120 slot margin) or the reconcile horizon, never included |
+| `CLAIMED` | Reserved; a new-format local row proves no submission yet |
+| `SUBMITTING` | May have reached the provider; uncertainty retains the claim |
+| `SUBMITTED` | Locally submitted and accepted, or observed after rollback |
+| `NOT_CONFIRMED` | Confirmation threshold not yet reached |
+| `CONFIRMED` | Evidence reached the persisted per-request threshold |
+| `FAILED` | Definitive rejection tombstone for new-format rows |
+| `EXPIRED` | NotSeen beyond transaction TTL plus 120-slot grace; never eligible for rebroadcast |
 
-Transitions:
+A proven `NotSubmitted` outcome releases both claims atomically. A definitive
+rejection retains both. Timeout, transport uncertainty, process death after
+`SUBMITTING`, expiry, and rollback never release a possibly broadcast claim.
+Only a stale new-format local `CLAIMED` row can be reclaimed.
 
-| From → To | Trigger |
-|---|---|
-| → `CLAIMED` | Verification passed; insert, or reclaim a dead row |
-| `CLAIMED` → `SUBMITTED` | **Client mode**: the payer already broadcast, so nothing is submitted |
-| `CLAIMED` → `SUBMITTING` | Server mode, before any wire I/O |
-| `SUBMITTING` → `FAILED` | `Rejected` or `NotSubmitted` |
-| `SUBMITTING` → `SUBMITTED` | `Accepted` |
-| `SUBMITTING` → *(stays)* | **`Unknown`** — may have been broadcast; reconciler only |
-| `SUBMITTED` → `CONFIRMED` | `awaitInclusion` reached depth |
-| `SUBMITTED` → `NOT_CONFIRMED` | Confirmation timed out |
-| `SUBMITTING`/`SUBMITTED`/`NOT_CONFIRMED` → `CONFIRMED` | Repeat `/settle` or reconciler finds inclusion |
-| `EXPIRED` → `CONFIRMED` | A late tx landed after all — recovered |
-| `CONFIRMED` → `SUBMITTED` | **Rollback**: no longer included within the stability window |
-| `…` → `EXPIRED` | Not included, past TTL+120 slots or the horizon |
+### Retry and confirmation policy
 
-`SUBMITTING → (stays)` on `Unknown` is the deliberate one. The node may have
-accepted it, so marking `FAILED` risks a double-spend when the caller retries.
-The row stays claimed and the reconciler resolves it from the chain.
+The normalized requirements and resource URL bind the transaction to one payment.
+Every matching retry authenticates the payload and method again, while skipping
+pre-broadcast-only checks when durable provenance or independent canonical
+evidence permits it. It checks current evidence even for a previously confirmed
+payment; it never returns a cached success merely because an old request passed.
 
-`CONFIRMED → SUBMITTED` exists because confirmation isn't final: within the
-stability window a confirmed tx can roll back, and reporting stale success would
-grant a resource that was never paid for.
+`confirmationPolicy.l1Confirmations` selects `-1..20`, defaulting to `1`.
+Confirmation depth is persisted, so the reconciler cannot promote a payment using
+a weaker process default. Observed confirmations are returned to callers.
+Unresolved outcomes return `settlement_pending` with the original hash, allowing
+upstream core's one automatic retry. The resource server separately owns
+business-operation consumption and its own durable Masumi quote store.
 
-`CLAIMED → SUBMITTED` skips `SUBMITTING` in client mode because there is no wire
-I/O to protect: the transaction is already on the network. Re-broadcasting it
-would not be a harmless retry, so `settle()` authenticates and waits for the
-depth the 402 asked for instead.
+### Existing V1 rows
 
-### Claiming and idempotency
-
-Every transition is a **fenced CAS**: `UPDATE … WHERE tx_hash = ? AND attempt_id = ?
-AND status = ?`. A reclaimed row's old attempt can never clobber the new one.
-
-The claim is `INSERT` on the `tx_hash` primary key — the DB, not the application,
-arbitrates the race. On conflict it tries `reclaim()`, which takes over rows that
-are `FAILED`/`EXPIRED` (unconditionally) or `CLAIMED` past the claim TTL (a
-worker that died between claim and submit). Both failing → `duplicate_settlement`.
-
-`requirements_digest` is SHA-256 over `{requirements, resource.url}` with map
-keys sorted. It identifies *the same logical request from the same producer* — it
-is not fully canonical JSON, and cross-producer digest equality is not a goal.
-
-Idempotent replay is **off by default** (`x402.settle.idempotent-replay`). When
-on, a repeat of a `CONFIRMED` payment with a matching digest returns the cached
-response — but never blindly: if the confirmation is inside the stability window
-it re-checks the chain first, and demotes to `SUBMITTED` +
-`settlement_not_confirmed` if inclusion no longer holds. A digest **mismatch**
-falls through to a fresh verify, where the reused tx fails naturally on
-`nonce_not_on_chain`.
+V2 adds policy, provenance, acceptance and terms-digest columns without changing
+V1. Historical rows have unknown policy, `LEGACY` provenance and no assumed
+acceptance: old `SUBMITTED` records may have originated in the removed client
+mode. The reconciler cannot invent missing policy. A matching, fully validated
+retry can bind it, but only current canonical evidence can establish success.
+Legacy `FAILED` and `EXPIRED` rows are not automatically reclaimed. No V1 status
+or response JSON grants permission to rebroadcast or return cached success.
 
 ### Reconciler
 
@@ -232,9 +203,10 @@ wrongly-`EXPIRED` payment.
 
 ### Settlement gate
 
-`POST /settle` returns **503** when the backend for that network is unhealthy,
-rather than accepting a settlement it cannot confirm. Submit-then-confirm is
-unreliable against a blind backend, so the honest answer is a retryable refusal.
+Fresh `POST /settle` calls return **503** when the network backend is unhealthy.
+A retry with an existing transaction row bypasses only this health precheck and
+reaches journal reconciliation, which can return protocol pending without a new
+submission. The stored binding and full retry authentication still apply.
 
 ---
 
@@ -253,6 +225,10 @@ One table, `facilitator.settlement`, keyed by `tx_hash`:
 | `claimed_at` | `timestamptz` | NOT NULL |
 | `submitted_at`, `confirmed_at`, `confirmed_slot`, `confirmed_block` | | nullable |
 | `error_reason`, `response_json` | | nullable |
+| `selected_confirmations` | `integer` | nullable only for historical policy; -1..20 |
+| `submission_provenance` | `varchar(16)` | `LEGACY` or `LOCAL` |
+| `submission_accepted` | `boolean` | authenticated local provider acceptance |
+| `terms_digest` | `varchar(64)` | unique when present; atomic Masumi quote claim |
 
 Index `idx_settlement_status_claimed (status, claimed_at)` serves the reconciler
 sweep and staleness queries.
@@ -288,3 +264,11 @@ Fails fast rather than surfacing misconfiguration as runtime errors:
 - [verification.md](verification.md) — the A–E rules in detail
 - [configuration.md](configuration.md) — every property
 - [../deploy/README.md](../deploy/README.md) — deployment, Compose, mainnet checklist
+
+### Reconciliation fairness
+
+Sweeps use a bounded 200-row keyset page ordered by claim time and transaction hash.
+The per-instance cursor advances even when observations fail or remain uncertain,
+then wraps after the last eligible row. A restart resets the cursor; an advisory-lock
+miss does not. Unknown or TTL-less records are preserved rather than expired to free
+queue capacity. No database migration is required for this scheduling change.

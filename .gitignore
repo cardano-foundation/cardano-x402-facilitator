@@ -32,6 +32,7 @@ src/test/resources/application-local.*
 build/
 gradle-app.setting
 .gradletasknamecache
+interop/node_modules/
 
 # The wrapper jar is tracked on purpose — without it ./gradlew cannot bootstrap,
 # so this negation guards against a future blanket *.jar rule.

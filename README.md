@@ -15,28 +15,27 @@ the payer already signed, and submits them. It cannot move funds on its own.
 
 ## Status
 
-Implemented and unit-tested (166 tests, all green), proven end-to-end on
-**preprod** with a real on-chain transaction. Nothing has run against mainnet —
-see the [mainnet checklist](deploy/README.md#mainnet-readiness-checklist) before
-you consider it.
+Compatibility target: `@x402/cardano` and `@x402/core` **2.26.0**, upstream
+[`x402-foundation/x402` main at `6323ec7`](https://github.com/x402-foundation/x402/tree/6323ec74c85607e706e0722dd294365a7fb57768).
+The upgrade includes TypeScript-generated signed vectors, a real HTTP SDK
+interoperability gate, and PostgreSQL migration/concurrency tests. See
+[testing](docs/testing.md) and [upgrade notes](docs/upstream-compatibility.md).
 
-The on-chain proof covers **server submission**. Client submission — inclusion
-and mempool evidence, settling without re-broadcasting — is unit-tested but has
-not been exercised against a real provider. Running against a standalone
-yaci-store reuses the same, on-chain-proven Blockfrost HTTP client, just pointed
-at a different `BLOCKFROST_BASE_URL`; running the full self-hosted stack
-(`deploy/docker-compose.yml`'s `full` profile) is not exercised in CI.
+An earlier version was proven on preprod. This upgrade's verification uses a
+controlled offline chain; it has not repeated that live proof or run on mainnet.
+The full self-hosted Compose stack is not exercised by these tests.
 
 ## Features
 
 - **All three x402 Cardano transfer methods** — `default` (address-to-address),
   `masumi` (`vested_pay` escrow, rules M1–M9), and `script` (arbitrary Plutus
   locks with aiken UPLC parameter application).
-- **Both submission modes** — `server` broadcasts the payment; `client`
-  authenticates one the payer already broadcast, which lets a resource server
-  quote `submissionPolicy: either` and leave the choice to the payer. Evidence
-  spans the spec's full ladder: mempool acceptance (`-1`), canonical inclusion
-  (`0`), and depth (`1..20`).
+- **Facilitator submission** — the payer signs, the facilitator broadcasts once,
+  and retries reconcile durable evidence. Confirmation policy spans authenticated
+  acceptance (`-1`, operator opt-in), canonical inclusion (`0`), and depth (`1..20`).
+- **Pre-submit validation** — canonical payloads, input quantities, value
+  conservation, minimum fees and signatures, with an optional full phase-1
+  validator for transactions beyond ordinary transfers.
 - **One Blockfrost-compatible chain client** — point it at hosted Blockfrost or
   a standalone yaci-store instance (your own cardano-node + yaci-store,
   consumed over its Blockfrost-compatible API) — chosen per network via
@@ -75,7 +74,7 @@ Check it's serving:
 curl localhost:4022/supported
 # {"kinds":[{"x402Version":2,"scheme":"exact","network":"cardano:preprod",
 #            "extra":{"assetTransferMethods":["default","masumi","script"],
-#                     "submissionModes":["server","client"], ...}}], ...}
+#                     "l1Confirmations":{"minimum":0,"maximum":20}, ...}}], ...}
 ```
 
 The `extra` block is the capability contract a resource server checks its
@@ -122,9 +121,9 @@ Two things clients get wrong:
 
 - **A rejected payment is `200 OK`** with `isValid: false`. Read the body, not
   the status.
-- **`settle` failing with `exact_cardano_settlement_not_confirmed` and a
-  non-empty `transaction` does not mean the payment failed.** It was broadcast
-  and may still land. Poll that hash; do not re-submit.
+- **`settle` failing with `settlement_pending` and a
+  non-empty `transaction` does not mean the payment failed.** Broadcast may have occurred
+  and it may still land. Retry the same payment to reconcile that hash.
 
 Full contract and every error code: [docs/api.md](docs/api.md).
 
@@ -174,7 +173,9 @@ unless you opt in. Full reference: [docs/configuration.md](docs/configuration.md
 ```bash
 export JAVA_HOME=/Library/Java/JavaVirtualMachines/temurin-21.jdk/Contents/Home
 
-./gradlew test        # 166 tests (Docker needed for the Postgres IT)
+./gradlew test        # Docker needed for the Postgres IT
+npm ci --prefix interop --ignore-scripts
+./gradlew interop     # published TypeScript SDKs against real Java HTTP
 ./gradlew bootRun     # run locally
 ./gradlew e2e         # on-chain proof; facilitator must be running
 ```

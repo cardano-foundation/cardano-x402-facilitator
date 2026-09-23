@@ -32,20 +32,24 @@ public class BlockfrostProtocolParamsProvider implements ProtocolParamsProvider 
         try {
             Result<com.bloxbean.cardano.client.api.model.ProtocolParams> res = backend.getEpochService().getProtocolParameters();
             if (!res.isSuccessful()) {
-                if (local != null) return local; // serve slightly stale over failing
                 throw new ChainLookupException("Blockfrost params: " + res.getResponse());
             }
             com.bloxbean.cardano.client.api.model.ProtocolParams pp = res.getValue();
             ProtocolParams fresh = new ProtocolParams(
                     new BigInteger(pp.getCoinsPerUtxoSize()),
-                    pp.getMaxTxSize() == null ? 16384 : pp.getMaxTxSize());
+                    pp.getMaxTxSize() == null ? 16384 : pp.getMaxTxSize(),
+                    pp.getMinFeeA() == null ? null : BigInteger.valueOf(pp.getMinFeeA()),
+                    pp.getMinFeeB() == null ? null : BigInteger.valueOf(pp.getMinFeeB()));
+            if (fresh.coinsPerUtxoByte().signum() <= 0 || fresh.maxTxSize() <= 0
+                    || fresh.minFeeCoefficient() == null || fresh.minFeeConstant() == null
+                    || fresh.minFeeCoefficient().signum() < 0 || fresh.minFeeConstant().signum() < 0)
+                throw new ChainLookupException("Blockfrost returned incomplete protocol parameters");
             cached = fresh;
             fetchedAtMillis = System.currentTimeMillis();
             return fresh;
         } catch (ChainLookupException e) {
             throw e;
         } catch (Exception e) {
-            if (local != null) return local;
             throw new ChainLookupException("Blockfrost params failed", e);
         }
     }

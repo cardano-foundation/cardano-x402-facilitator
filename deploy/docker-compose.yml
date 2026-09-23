@@ -38,6 +38,8 @@ services:
 
   # ---- light profile: blockfrost (or yaci-store against a public relay) --------
   facilitator:
+    # aiken-java-binding 0.1.0 bundles Linux x86-64, but not Linux ARM64.
+    platform: linux/amd64
     build:
       context: ..
       dockerfile: Dockerfile
@@ -52,9 +54,9 @@ services:
       # Blockfrost provider. Point BLOCKFROST_BASE_URL at hosted Blockfrost (default)
       # or a standalone yaci-store's Blockfrost-compatible endpoint, e.g.
       # http://my-yaci-store:8080/api/v1/blockfrost; project-id is ignored by yaci-store.
-      BLOCKFROST_BASE_URL: ${BLOCKFROST_BASE_URL:-https://cardano-preprod.blockfrost.io/api/v0}
+      BLOCKFROST_BASE_URL: ${BLOCKFROST_BASE_URL:-https://cardano-${CARDANO_NETWORK:-preprod}.blockfrost.io/api/v0}
       BLOCKFROST_PROJECT_ID: ${BLOCKFROST_PROJECT_ID:-}
-      CARDANO_NETWORK: ${CARDANO_NETWORK:-preprod}
+      X402_NETWORK_ID: cardano:${CARDANO_NETWORK:-preprod}
     ports:
       - "4022:4022"
     restart: unless-stopped
@@ -119,14 +121,13 @@ services:
         condition: service_healthy
       cardano-node:
         condition: service_healthy
+    # Network magic and indexer start point must follow the same network as the node.
+    env_file:
+      - ./networks/${CARDANO_NETWORK:-preprod}.env
     environment:
       STORE_CARDANO_HOST: cardano-node                       # sync source (N2N)
       STORE_CARDANO_PORT: "3001"
-      STORE_CARDANO_PROTOCOL_MAGIC: ${YACI_PROTOCOL_MAGIC:-1}
       STORE_CARDANO_N2C_NODE_SOCKET_PATH: /ipc/node.socket   # submission (N2C)
-      # Start indexing from a recent intersect (slot + matching blockhash), not genesis.
-      STORE_CARDANO_SYNC_START_SLOT: ${SYNC_START_SLOT:-128935504}
-      STORE_CARDANO_SYNC_START_BLOCKHASH: ${SYNC_START_BLOCKHASH:-54f6b2f9647ec1f3a1466368b428c3246c05be848c006fe24e53f1b87bb35d6a}
       # Shared Postgres instance, own schema (the facilitator uses the `facilitator` schema).
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/postgres?currentSchema=yaci_store
       SPRING_DATASOURCE_USERNAME: ${DB_USER:-postgres}
@@ -157,6 +158,7 @@ services:
     restart: unless-stopped
 
   facilitator-node:
+    platform: linux/amd64
     build:
       context: ..
       dockerfile: Dockerfile
@@ -170,7 +172,7 @@ services:
       DB_URL: jdbc:postgresql://postgres:5432/postgres
       DB_USER: postgres
       DB_PASSWORD: ${DB_PASSWORD:-postgres}
-      CARDANO_NETWORK: ${CARDANO_NETWORK:-preprod}
+      X402_NETWORK_ID: cardano:${CARDANO_NETWORK:-preprod}
       # Consume the standalone yaci-store via its Blockfrost-compatible API — the same
       # blockfrost provider as hosted Blockfrost; project-id is ignored by yaci-store.
       BLOCKFROST_BASE_URL: http://yaci-store:8080/api/v1/blockfrost
@@ -205,8 +207,8 @@ services:
     environment:
       # Comma-separated Quarkus profile list; the first entry is the network
       # (e.g. preprod, or preprod,relay to also serve downstream nodes over n2n).
-      YANO_PROFILE: ${YANO_PROFILE:-preprod}
-      YANO_NETWORK: ${YANO_NETWORK:-preprod}
+      YANO_PROFILE: ${YANO_PROFILE:-${CARDANO_NETWORK:-preprod}}
+      YANO_NETWORK: ${CARDANO_NETWORK:-preprod}
       JAVA_OPTS: ${JAVA_OPTS:-}
       YANO_EXTRA_ARGS: ${YANO_EXTRA_ARGS:-}
     ports:
@@ -217,6 +219,7 @@ services:
     restart: unless-stopped
 
   facilitator-yano:
+    platform: linux/amd64
     build:
       context: ..
       dockerfile: Dockerfile
@@ -230,7 +233,7 @@ services:
       DB_URL: jdbc:postgresql://postgres:5432/postgres
       DB_USER: postgres
       DB_PASSWORD: ${DB_PASSWORD:-postgres}
-      CARDANO_NETWORK: ${CARDANO_NETWORK:-preprod}
+      X402_NETWORK_ID: cardano:${CARDANO_NETWORK:-preprod}
       # Consume the yano node via its Blockfrost-compatible REST API — the same
       # blockfrost provider as hosted Blockfrost / yaci-store; project-id is ignored.
       # Override if a yano build serves Blockfrost paths under a different prefix

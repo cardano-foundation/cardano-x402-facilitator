@@ -89,6 +89,29 @@ class ApiGuardFilterTest {
         assertThat(throttled.getHeader("Retry-After")).isEqualTo("60");
     }
 
+    @Test void unauthenticatedHeadersCannotCreateRateBuckets() throws Exception {
+        ApiGuardFilter filter = new ApiGuardFilter(props(List.of(), 1), Clock.systemUTC());
+        filter.doFilter(req("/verify", null), new MockHttpServletResponse(), new MockFilterChain());
+        for (int i = 0; i < 100; i++) {
+            var response = new MockHttpServletResponse();
+            filter.doFilter(req("/verify", "untrusted-" + i), response, new MockFilterChain());
+            assertThat(response.getStatus()).isEqualTo(429);
+        }
+        assertThat(filter.trackedBucketCount()).isEqualTo(1);
+    }
+
+    @Test void authenticatedKeysHaveIndependentQuotas() throws Exception {
+        ApiGuardFilter filter = new ApiGuardFilter(props(List.of("first", "second"), 1), Clock.systemUTC());
+        for (String key : List.of("first", "second")) {
+            var response = new MockHttpServletResponse();
+            filter.doFilter(req("/verify", key), response, new MockFilterChain());
+            assertThat(response.getStatus()).isEqualTo(200);
+            var repeat = new MockHttpServletResponse();
+            filter.doFilter(req("/verify", key), repeat, new MockFilterChain());
+            assertThat(repeat.getStatus()).isEqualTo(429);
+        }
+    }
+
     @Test void evictsStaleBucketsWhenMinuteRolls() throws Exception {
         // Distinct client IPs must not accumulate windows forever: once a new minute
         // starts, prior-minute buckets are swept so the map stays bounded.
