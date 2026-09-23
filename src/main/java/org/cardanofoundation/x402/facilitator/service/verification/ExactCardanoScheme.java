@@ -386,7 +386,8 @@ public class ExactCardanoScheme {
         if (payTo == null) return false;
         try {
             Address address = new Address(payTo);
-            if (address.getAddressType() == AddressType.Byron) return false;
+            if (address.getAddressType() == AddressType.Byron
+                    || address.getAddressType() == AddressType.Reward) return false;
             return (address.getBytes()[0] & 0x0f) == expectedNetworkId;
         } catch (RuntimeException e) {
             return false;

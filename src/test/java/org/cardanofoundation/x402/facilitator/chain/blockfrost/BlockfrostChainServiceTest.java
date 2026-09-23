@@ -12,6 +12,10 @@ import java.time.Duration;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.time.ZoneId;
+import java.net.InetSocketAddress;
+import java.util.concurrent.atomic.AtomicInteger;
+import com.sun.net.httpserver.HttpServer;
 import org.cardanofoundation.x402.facilitator.chain.ShelleyNetworkClock;
 import org.cardanofoundation.x402.facilitator.chain.ChainLookupException;
 import org.cardanofoundation.x402.facilitator.model.ErrorCodes;
@@ -27,6 +31,79 @@ class BlockfrostChainServiceTest {
     final BackendService backend = mock(BackendService.class, RETURNS_DEEP_STUBS);
     final BlockfrostChainService chain = new BlockfrostChainService(backend, Duration.ofMillis(1), null,null);
     final byte[] tx = Base64.getDecoder().decode(TestTx.buildBase64(TestTx.Spec.defaults()));
+
+    @Test void onlyAuthoritativeMempool404ReportsUnprovenAbsence() throws Exception {
+        var latest = new com.bloxbean.cardano.client.backend.model.Block();
+        latest.setHeight(1_000_000); latest.setSlot(1_000_000);
+        when(backend.getBlockService().getLatestBlock()).thenReturn(Result.success("").withValue(latest));
+        when(backend.getTransactionService().getTransaction(TestTx.NONCE_TX_HASH))
+                .thenReturn(Result.error("not found").code(404));
+        AtomicInteger status = new AtomicInteger(500);
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/mempool/", exchange -> {
+            exchange.sendResponseHeaders(status.get(), -1);
+            exchange.close();
+        });
+        server.start();
+        try {
+            var provider = new BlockfrostChainService(backend, Duration.ofMillis(1),
+                    "http://127.0.0.1:" + server.getAddress().getPort() + "/", "");
+            for (int code : new int[]{500, 401, 429}) {
+                status.set(code);
+                assertThatThrownBy(() -> provider.checkInclusion(TestTx.NONCE_TX_HASH))
+                        .isInstanceOf(ChainLookupException.class);
+            }
+            status.set(200);
+            assertThat(provider.checkInclusion(TestTx.NONCE_TX_HASH)).isInstanceOf(InclusionResult.Mempool.class);
+            status.set(404);
+            assertThat(provider.checkInclusion(TestTx.NONCE_TX_HASH))
+                    .isEqualTo(new InclusionResult.NotSeen());
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test void persistentPollingFailureCannotBecomeAbsence() throws Exception {
+        when(backend.getBlockService().getLatestBlock()).thenReturn(Result.error("down").code(503));
+        assertThatThrownBy(() -> chain.awaitInclusion(TestTx.NONCE_TX_HASH, 0, Duration.ofMillis(15)))
+                .isInstanceOf(ChainLookupException.class);
+    }
+
+    @Test void cachedHealthBecomesStaleAsWallClockAdvances() throws Exception {
+        var slots = new ShelleyNetworkClock(0, 1_000_000, 1_000);
+        class MutableClock extends Clock {
+            Instant now = slots.slotToTime(100);
+            public ZoneId getZone() { return ZoneOffset.UTC; }
+            public Clock withZone(ZoneId zone) { return this; }
+            public Instant instant() { return now; }
+        }
+        var clock = new MutableClock();
+        var latest = new com.bloxbean.cardano.client.backend.model.Block();
+        latest.setSlot(100); latest.setHeight(100);
+        when(backend.getBlockService().getLatestBlock()).thenReturn(Result.success("").withValue(latest));
+        var provider = new BlockfrostChainService(backend, Duration.ofMillis(1), null, null, slots, clock);
+        assertThat(provider.health().healthy()).isTrue();
+        clock.now = clock.now.plus(Duration.ofMinutes(6));
+        assertThat(provider.health().healthy()).isFalse();
+    }
+
+    @Test void configuredStaleTipBlocksLookupAndSubmission() throws Exception {
+        var slots = new ShelleyNetworkClock(0, 1_000_000, 1_000);
+        var now = Clock.fixed(slots.slotToTime(1_000), ZoneOffset.UTC);
+        var genesis = new com.bloxbean.cardano.client.backend.model.Genesis();
+        genesis.setNetworkMagic(1);
+        when(backend.getNetworkInfoService().getNetworkInfo()).thenReturn(Result.success("").withValue(genesis));
+        var stale = new com.bloxbean.cardano.client.backend.model.Block();
+        stale.setSlot(100); stale.setHeight(100);
+        when(backend.getBlockService().getLatestBlock()).thenReturn(Result.success("").withValue(stale));
+        var provider = new BlockfrostChainService(backend, Duration.ofMillis(1), null, null,
+                slots, now, 1, Duration.ofMinutes(5));
+        assertThat(provider.health().healthy()).isFalse();
+        assertThatThrownBy(() -> provider.getUtxoState(TestTx.NONCE_TX_HASH, 0))
+                .isInstanceOf(ChainLookupException.class);
+        assertThat(provider.submitTransaction(tx)).isInstanceOf(SubmissionResult.NotSubmitted.class);
+        verify(backend.getTransactionService(), never()).submitTransaction(any(byte[].class));
+    }
     @Test void pathologicalAddressScanHasAHardProviderCallBudget() throws Exception {
         Utxo output = Utxo.builder().txHash(TestTx.NONCE_TX_HASH).outputIndex(0)
                 .address(TestTx.PAYER_ADDRESS).build();

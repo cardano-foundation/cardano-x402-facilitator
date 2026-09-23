@@ -16,11 +16,34 @@ env:
   PRIVATE_DOCKER_REGISTRY_URL: ${{ secrets.GITLAB_DOCKER_REGISTRY_URL }}
   PRIVATE_DOCKER_REGISTRY_USER: Deploy-Token
   PRIVATE_DOCKER_REGISTRY_PASS: ${{ secrets.GITLAB_PKG_REGISTRY_TOKEN }}
-  DOCKER_PUSH: true
   GITLAB_MAVEN_REGISTRY_URL: ${{ secrets.GITLAB_MAVEN_REGISTRY_URL }}
 
 jobs:
+  verify:
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install pinned interop dependencies
+        run: npm ci --prefix interop --ignore-scripts
+      - name: Java, PostgreSQL Testcontainers, and TypeScript interop
+        run: ./gradlew test interop --rerun-tasks
+      - name: PostgreSQL role boundaries and existing-volume upgrade
+        run: sh deploy/test-postgres-roles.sh
+      - name: Compose network rendering
+        run: python3 deploy/test-network-config.py
+
   publish:
+    needs: verify
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))
     permissions:
       contents: write
       packages: write
@@ -44,7 +67,7 @@ jobs:
       - name:  🌍 earthly (docker build and push)
         run: |
           earthly +docker-publish \
-            --PUSH=${DOCKER_PUSH} \
+            --PUSH=true \
             --DOCKER_REGISTRIES="${{ env.DOCKER_REGISTRIES_FILTERED }}" \
             --DOCKER_IMAGES_EXTRA_TAGS="${EARTHLY_DOCKER_IMAGES_EXTRA_TAGS}" \
             --GITLAB_MAVEN_REGISTRY_URL="${GITLAB_MAVEN_REGISTRY_URL}"

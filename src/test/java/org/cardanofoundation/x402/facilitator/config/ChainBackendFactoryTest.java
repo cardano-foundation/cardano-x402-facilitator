@@ -22,8 +22,8 @@ class ChainBackendFactoryTest {
                 new X402Properties.ChainConfig(
                         new X402Properties.Blockfrost("https://cardano-preprod.blockfrost.io/api/v0", "")),
                 null);
-        // verification / settle / duplicateCache / http / masumi / security all absent.
-        X402Properties props = new X402Properties(List.of(entry), null, null, null, null, null, null);
+        // verification / settle / duplicateCache / http / masumi all absent.
+        X402Properties props = new X402Properties(List.of(entry), null, null, null, null, null);
 
         ChainBackend backend = new ChainBackendFactory().build(entry, props);
 

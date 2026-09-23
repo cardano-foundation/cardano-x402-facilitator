@@ -43,7 +43,7 @@ class NetworkConfigurationTest {
         when(factory.build(any(), any())).thenReturn(backend);
         var entry = new X402Properties.NetworkEntry(alias, true,
                 new X402Properties.ChainConfig(new X402Properties.Blockfrost("https://example.invalid/", "")), null);
-        var props = new X402Properties(List.of(entry), null, null, null, null, null, null);
+        var props = new X402Properties(List.of(entry), null, null, null, null, null);
         new StartupValidation(props).afterPropertiesSet(); // Alias is explicitly accepted configuration.
         var config = new FacilitatorConfig();
         var backends = config.chainBackends(props, factory);
@@ -71,7 +71,7 @@ class NetworkConfigurationTest {
         for (var pair : List.of(List.of("cardano:preprod", "cip34:0-1"),
                 List.of("cardano:mainnet", "cip34:1-764824073"), List.of("cardano:preview", "cip34:0-2"))) {
             var props = new X402Properties(pair.stream().map(id -> new X402Properties.NetworkEntry(id, true, backend, null)).toList(),
-                    null, null, null, null, null, null);
+                    null, null, null, null, null);
             assertThatThrownBy(() -> new StartupValidation(props).afterPropertiesSet()).isInstanceOf(IllegalStateException.class)
                     .hasMessageContaining("Duplicate");
             assertThatThrownBy(() -> new FacilitatorConfig().chainBackends(props, mock(ChainBackendFactory.class)))

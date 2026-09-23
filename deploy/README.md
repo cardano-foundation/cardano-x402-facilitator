@@ -41,11 +41,12 @@ facilitator does not embed an indexer either way.
   CARDANO_NETWORK=preprod docker compose --profile full up -d
   ```
 
-Key environment variables (all have defaults):
+Key environment variables:
 
 | Var | Default | Used by |
 |---|---|---|
-| `DB_PASSWORD`, `DB_PORT` | `facilitator`, `5432` | postgres |
+| `POSTGRES_ADMIN_PASSWORD`, `FACILITATOR_DB_PASSWORD`, `YACI_DB_PASSWORD` | required, distinct | database administrator and separate application roles |
+| Facilitator API host port | `127.0.0.1:4022` | local published listener in every Compose profile |
 | `BLOCKFROST_BASE_URL` | hosted Blockfrost for `CARDANO_NETWORK` (light) / yaci-store URL (full, hardcoded) | facilitator |
 | `BLOCKFROST_PROJECT_ID` | — | facilitator — required for hosted Blockfrost, ignored by yaci-store |
 | `CARDANO_NETWORK` | `preprod` | all profiles: canonical facilitator ID, hosted URL, node, indexer magic and Yano |
@@ -63,6 +64,40 @@ builds must likewise use `docker build --platform linux/amd64 ...`.
 The Docker build runs the offline Masumi and script derivation tests on the
 target platform. Missing or incompatible native libraries fail the build rather
 than first appearing as a payment-time HTTP 500.
+
+### PostgreSQL roles and existing volumes
+
+On a fresh volume, `deploy/postgres/10-roles.sh` creates two non-superuser
+login roles. `facilitator` owns its settlement schema and Flyway history;
+`yaci_store` owns its own schema. Neither can access the other's private
+schema. Each has `CONNECT, CREATE` on the shared `postgres` database because
+the immutable V1 migration executes `CREATE SCHEMA IF NOT EXISTS`, which
+requires database CREATE even if the schema already exists. Thus these roles
+can create another schema, but cannot create databases or roles or become
+administrators. PostgreSQL has no published host port.
+
+For an **existing** `pgdata` volume, changing environment passwords alone
+does not update PostgreSQL roles and init scripts do not rerun. Before starting
+the new facilitator/Yaci images:
+
+1. Stop all facilitator and Yaci writers; make and verify a database backup.
+2. Set the three required password variables in the deployment environment.
+3. Inspect the existing volume's `pg_hba.conf` and replace any TCP `trust`
+   authentication rules with `scram-sha-256`, preserving intentional
+   addresses/TLS/reject rules. Reload PostgreSQL and verify a wrong password
+   is rejected over the container network. The upgrade script fails closed
+   while a TCP trust rule remains. The Compose `POSTGRES_INITDB_ARGS` setting
+   hardens fresh volumes only; it does not rewrite an existing `pg_hba.conf`.
+4. Start only PostgreSQL with the existing volume, then run
+   `docker compose -f deploy/docker-compose.yml --profile light exec -u postgres postgres sh /opt/x402/upgrade-existing.sh`.
+5. Confirm the script succeeds, then start the selected profile. The upgrade
+   changes only the two application schemas and their contained objects in one
+   transaction; it preserves Flyway history and does not reset journal rows.
+   The script also rotates the existing administrator password to
+   `POSTGRES_ADMIN_PASSWORD`.
+
+Use a separate Compose project for each network. Do not delete the existing
+volume to make the new configuration start.
 
 If an older ARM64 image reports `UnsatisfiedLinkError` for
 `libaiken_jna_wrapper.so`, rebuild and recreate the facilitator from the project
@@ -104,14 +139,18 @@ Enabled by default:
 - **Settlement gate** — fresh `POST /settle` requests return 503 when the chain
   backend is unhealthy. Journaled retries reach reconciliation and can return
   `settlement_pending` without another broadcast.
+- **Readiness** — `/health` and Actuator readiness return unavailable for an
+  unhealthy required network, including stale or future provider tips.
+  Optional network failures are visible without taking the service offline.
 - **CORS** — default-deny; opt origins in via `x402.http.cors-allowed-origins`.
 
-Opt-in (off unless configured):
-
-- **API keys** — `x402.security.api-keys` requires `X-API-Key` on `/verify` and
-  `/settle` (401 otherwise).
-- **Rate limit** — `x402.security.rate-limit.requests-per-minute` per key/IP
-  fixed-window (429 + `Retry-After` otherwise).
+The facilitator does not authenticate or rate-limit HTTP callers. Compose
+publishes its API only on the host's loopback interface. Other containers on
+the Compose network can still reach it, and a direct JAR launch does not
+inherit this host binding. The former `x402.security.*`, `FACILITATOR_API_KEY`,
+and `FACILITATOR_RATE_LIMIT_RPM` settings no longer protect the API. A remotely
+reachable deployment needs operator-managed TLS, authentication, and traffic
+limits at ingress. See [API exposure](../docs/configuration.md#api-exposure).
 
 ## Running against yaci-store
 
@@ -139,7 +178,8 @@ service itself — see that service's block in `deploy/docker-compose.yml`.
 - [ ] Configure `x402.masumi.allowed-script-hashes.cardano:mainnet` with your
       deployment's `vested_pay` escrow script hash, to serve only that one. The
       address is derived and checked regardless; the allowlist narrows it.
-- [ ] Enable API keys and a rate limit; put the facilitator behind TLS.
+- [ ] Set distinct database passwords; put the loopback-bound facilitator
+      behind an authenticated, traffic-limited TLS ingress before remote use.
 - [ ] Confirm `x402.settle.accept-mempool=false` (never grant on mempool).
 - [ ] Set `extra.confirmationPolicy.l1Confirmations` in resource-server quotes
       to the depth appropriate for the payment (default 1); the old process
@@ -186,3 +226,20 @@ on health and payment chain access; mismatch or unavailable identity fails close
 and no transaction is submitted. Successful identity checks are cached for 30 seconds.
 Application construction and wall-clock slot calculation remain offline; a provider
 that is still starting makes health/payment checks fail until its identity is available.
+The latest block must be within `x402.chain.max-tip-age` (default five minutes)
+and no more than 30 seconds ahead of the local clock. The bundled provider
+cannot prove that its transaction index has caught up to that tip, so even
+transaction and mempool 404 responses leave an unobserved settlement pending
+after TTL. The durable claim prevents repeat submission. Investigate these
+rows with independent chain evidence; do not delete claims or manually
+rebroadcast. An unavailable or unsupported mempool endpoint also leaves the
+settlement pending. See [settlement evidence](../docs/configuration.md) for
+the custom-provider proof requirement.
+
+## E2E credentials
+
+The optional `./gradlew e2e` proof requires `BLOCKFROST_PROJECT_ID` and
+`E2E_MNEMONIC` from the environment. The harness contains no credential
+fallbacks. Rotate any previously committed preprod project ID and mnemonic
+at their providers/wallet, since removing them from source does not revoke
+their historical exposure. Fund and use a dedicated testnet wallet only.

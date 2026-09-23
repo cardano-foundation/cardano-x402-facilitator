@@ -164,6 +164,19 @@ class ExactCardanoVerifyTest {
     }
 
     @Test
+    void rejectsRewardAddressAsPayToOrChangeOutput() throws Exception {
+        String reward = AddressProvider.getRewardAddress(
+                Credential.fromKey(KeyGenUtil.getKeyHash(TestTx.PAYER_VKEY)), Networks.testnet()).toBech32();
+        PaymentRequirements seller = requirements("cardano:preprod", TestTx.PAY_TO, "2000000", "lovelace");
+        String rewardChange = TestTx.buildBase64WithChangeAddress(TestTx.Spec.defaults(), reward);
+        assertThat(scheme.verify(payload(rewardChange, TestTx.NONCE, seller), seller).isValid()).isFalse();
+
+        PaymentRequirements rewardSeller = requirements("cardano:preprod", reward, "2000000", "lovelace");
+        String directReward = TestTx.buildBase64(TestTx.Spec.defaults().withPayTo(reward));
+        assertThat(scheme.verify(payload(directReward, TestTx.NONCE, rewardSeller), rewardSeller).isValid()).isFalse();
+    }
+
+    @Test
     void rejectsUndecodableTransaction() {
         PaymentRequirements req = requirements("cardano:preprod", TestTx.PAY_TO, "2000000", "lovelace");
         VerifyResponse r = scheme.verify(payload("bm90LWEtdHg=", TestTx.NONCE, req), req);

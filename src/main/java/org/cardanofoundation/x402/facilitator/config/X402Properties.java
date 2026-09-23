@@ -12,8 +12,7 @@ public record X402Properties(List<NetworkEntry> networks,
                              Settle settle,
                              DuplicateCache duplicateCache,
                              Http http,
-                             Masumi masumi,
-                             Security security) {
+                             Masumi masumi) {
 
     public record NetworkEntry(String id, Boolean required, ChainConfig chain, SlotConfig slotConfig) {
         public boolean isRequired() {
@@ -99,23 +98,4 @@ public record X402Properties(List<NetworkEntry> networks,
     public record Masumi(Map<String, List<String>> allowedScriptHashes) {
     }
 
-    /**
-     * Optional edge protections, all off by default so the facilitator stays
-     * open unless an operator opts in.
-     */
-    public record Security(List<String> apiKeys, RateLimit rateLimit) {
-        public List<String> apiKeysOrDefault() {
-            return apiKeys == null ? List.of() : apiKeys;
-        }
-
-        public int requestsPerMinuteOrDefault() {
-            return rateLimit == null ? 0 : rateLimit.requestsPerMinuteOrDefault();
-        }
-
-        public record RateLimit(Integer requestsPerMinute) {
-            public int requestsPerMinuteOrDefault() {
-                return requestsPerMinute == null ? 0 : requestsPerMinute;
-            }
-        }
-    }
 }

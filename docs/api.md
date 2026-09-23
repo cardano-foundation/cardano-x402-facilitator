@@ -23,15 +23,15 @@ never JSON numbers, so no precision is lost.
 
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
-| `POST` | `/verify` | optional API key | Validate a signed payment without touching the chain state |
-| `POST` | `/settle` | optional API key | Submit the payment and wait for confirmation |
+| `POST` | `/verify` | none in application | Validate a signed payment without touching the chain state |
+| `POST` | `/settle` | none in application | Submit the payment and wait for confirmation |
 | `GET` | `/supported` | open | Advertise the (version, scheme, network) triples served |
 | `GET` | `/health` | open | Human-facing summary |
 | `GET` | `/actuator/health` | open | Machine probes (liveness/readiness) |
 | `GET` | `/actuator/prometheus` | open | Metrics |
 
-`/verify` and `/settle` are guarded only when `x402.security.api-keys` is
-configured; see [configuration.md](configuration.md).
+The facilitator does not authenticate or rate-limit callers. See
+[API exposure](configuration.md#api-exposure) before making it reachable remotely.
 
 ---
 
@@ -391,9 +391,7 @@ These come from the framework/filters, not the scheme, and use an
 |---|---|---|
 | `400` | `{"error": "Missing paymentPayload or paymentRequirements"}` | Absent required object |
 | `400` | `{"error": "Malformed request body"}` | Unparseable JSON |
-| `401` | Spring default error body | Missing/invalid `X-API-Key` (only when keys configured) |
 | `413` | **Two shapes — see below** | Over `x402.http.max-request-bytes` |
-| `429` | Spring default error body + `Retry-After: 60` | Over the rate limit (only when configured) |
 | `500` | `{"error": "No facilitator registered for scheme: …"}` | Unregistered (version, scheme, network) |
 | `500` | `{"error": "internal_error", "correlationId": "<uuid>"}` | Unhandled; detail is in the log under that id |
 

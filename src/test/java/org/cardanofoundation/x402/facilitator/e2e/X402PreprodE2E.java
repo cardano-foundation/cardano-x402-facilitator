@@ -35,19 +35,16 @@ import java.util.Map;
  *   4. independently prove the tx is ON-CHAIN via a direct provider lookup of the
  *      LOCALLY computed tx hash (never the facilitator's word for it).
  *
- * Owner-directed preprod test credentials are coded as env-overridable defaults
- * (testnet-only; rotate after the exercise). The harness is network-configurable
+ * Credentials are supplied only through the environment. The harness is network-configurable
  * so the same class runs the yaci-devkit devnet E2E (E2E_NETWORK, E2E_BACKEND_URL).
  *
  * Run: BLOCKFROST_PROJECT_ID=... ./gradlew e2e   (facilitator must be running)
  */
 public class X402PreprodE2E {
 
-    static final String BF_PROJECT = env("BLOCKFROST_PROJECT_ID", "preprodwv4rjfmnCJsuYNpZWGb9zBAfvoRH7T22");
+    static final String BF_PROJECT = requiredEnv("BLOCKFROST_PROJECT_ID");
     static final String BACKEND_URL = env("E2E_BACKEND_URL", "https://cardano-preprod.blockfrost.io/api/v0/");
-    static final String MNEMONIC = env("E2E_MNEMONIC",
-            "base sun bonus asset priority twenty puppy rural animal public rural symbol tilt crowd "
-                    + "grape claim fury satisfy wing churn ginger essence cigar nasty");
+    static final String MNEMONIC = requiredEnv("E2E_MNEMONIC");
     static final String FACILITATOR = env("FACILITATOR_URL", "http://localhost:4022");
     static final String NETWORK = env("E2E_NETWORK", "cardano:preprod");
     static final BigInteger AMOUNT = new BigInteger(env("E2E_AMOUNT_LOVELACE", "1500000"));
@@ -154,5 +151,13 @@ public class X402PreprodE2E {
     private static String env(String name, String fallback) {
         String v = System.getenv(name);
         return v == null || v.isEmpty() ? fallback : v;
+    }
+
+    private static String requiredEnv(String name) {
+        String value = System.getenv(name);
+        if (value == null || value.isBlank()) {
+            throw new IllegalStateException(name + " is required for E2E");
+        }
+        return value;
     }
 }

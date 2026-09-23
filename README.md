@@ -154,8 +154,9 @@ NETWORKS_FILE=file:/etc/x402/networks.yml java -jar facilitator.jar
 It **replaces** the list in `application.yml` rather than adding to it, and the
 `file:` prefix is required — a bare path is silently ignored.
 
-API keys, rate limiting, and CORS are **off by default** — the service is open
-unless you opt in. Full reference: [docs/configuration.md](docs/configuration.md).
+The facilitator has no built-in HTTP authentication or rate limiting. Compose
+publishes its API on host loopback; protect any remote ingress separately.
+CORS remains opt-in. See [docs/configuration.md](docs/configuration.md).
 
 ## Documentation
 
@@ -194,12 +195,12 @@ touching it.
 ## Security
 
 - The facilitator holds **no keys** and signs nothing.
-- `/verify` and `/settle` are **unauthenticated** unless you set
-  `x402.security.api-keys`. Put it behind TLS.
+- `/verify` and `/settle` do not authenticate callers. Compose publishes the
+  facilitator on host loopback; direct JAR launches use Spring Boot's listener
+  setting. Use a protected TLS ingress if the API is remotely reachable.
 - The `masumi` escrow address is **derived** from the deployment parameters and
   `payTo` must equal it, so a hostile address fails regardless of configuration.
   The script-hash allowlist narrows that further to deployments you nominate, and
   is inactive until configured — set it before mainnet.
-- The E2E test class carries **throwaway preprod credentials** as overridable
-  defaults — testnet-only, a documented deviation, and to be rotated. Never point
-  it at mainnet.
+- The E2E test requires externally supplied preprod credentials. Rotate the
+  values exposed in earlier source history before using that environment again.

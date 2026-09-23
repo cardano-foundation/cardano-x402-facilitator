@@ -26,6 +26,9 @@ management:
     health:
       probes:
         enabled: true
+      group:
+        readiness:
+          include: readinessState,db,chainReadiness
 
 x402:
   networks:

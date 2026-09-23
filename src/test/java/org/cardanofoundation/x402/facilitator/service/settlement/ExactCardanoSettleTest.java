@@ -269,6 +269,22 @@ class ExactCardanoSettleTest {
     }
 
     @Test
+    void unknownAbsenceCannotDemoteConfirmedPaymentOnRetry() {
+        String tx = TestTx.buildBase64(TestTx.Spec.defaults());
+        SettleResponse first = service.settle(payload(tx), requirements());
+        assertThat(first.success()).isTrue();
+        chain.includedDepth = FakeChainService.NOT_SEEN;
+        chain.observedTipSlot = -1L;
+        chain.currentSlot = 2_000_000;
+        SettleResponse retry = service.settle(payload(tx), requirements());
+        assertThat(retry.errorReason()).isEqualTo("settlement_pending");
+        assertThat(repo.find(first.transaction()).orElseThrow().status()).isEqualTo(SettlementRecord.Status.CONFIRMED);
+        assertThat(chain.submitCount).isEqualTo(1);
+        chain.includedDepth = 3;
+        assertThat(service.settle(payload(tx), requirements()).success()).isTrue();
+    }
+
+    @Test
     void duplicateProbeLookupErrorPreservesState() {
         String tx = TestTx.buildBase64(TestTx.Spec.defaults());
         chain.includedDepth = FakeChainService.NOT_SEEN;
@@ -350,6 +366,30 @@ class ExactCardanoSettleTest {
         chain.inclusionDepthByHash.put(h1, FakeChainService.NOT_SEEN);
         reconciler.sweep();
         assertThat(repo.find(h1).orElseThrow().status()).isEqualTo(SettlementRecord.Status.SUBMITTED);
+    }
+
+    @Test
+    void reconcilerPreservesUnobservedRowsAndConfirmedRowsWithoutIndexCoverage() {
+        String confirmed = "dd".repeat(32);
+        String unobserved = "ee".repeat(32);
+        seedRow(confirmed, SettlementRecord.Status.SUBMITTED, 1_000_000L, Instant.now());
+        seedRow(unobserved, SettlementRecord.Status.SUBMITTED, 100L, Instant.now());
+        chain.inclusionDepthByHash.put(confirmed, 2);
+        chain.inclusionDepthByHash.put(unobserved, FakeChainService.NOT_SEEN);
+        chain.observedTipSlot = -1L;
+        SettlementReconciler reconciler = new SettlementReconciler(repo,
+                Map.of("cardano:preprod", chain), null, 1,
+                Duration.ofMinutes(10), Duration.ofHours(24), Clock.systemUTC(), false);
+        reconciler.sweep();
+        assertThat(repo.find(confirmed).orElseThrow().status()).isEqualTo(SettlementRecord.Status.CONFIRMED);
+        chain.inclusionDepthByHash.put(confirmed, FakeChainService.NOT_SEEN);
+        chain.currentSlot = 2_000_000;
+        reconciler.sweep();
+        assertThat(repo.find(confirmed).orElseThrow().status()).isEqualTo(SettlementRecord.Status.CONFIRMED);
+        assertThat(repo.find(unobserved).orElseThrow().status()).isEqualTo(SettlementRecord.Status.SUBMITTED);
+        chain.inclusionDepthByHash.put(unobserved, 2);
+        reconciler.sweep();
+        assertThat(repo.find(unobserved).orElseThrow().status()).isEqualTo(SettlementRecord.Status.CONFIRMED);
     }
 
     @Test
@@ -452,6 +492,37 @@ class ExactCardanoSettleTest {
         assertThat(expired.extra()).containsEntry("status", "expired");
         assertThat(repo.find(first.transaction()).orElseThrow().status()).isEqualTo(SettlementRecord.Status.EXPIRED);
         assertThat(chain.submitCount).isEqualTo(1);
+    }
+
+    @Test
+    void wallClockPastTtlCannotExpireWhileProviderTipIsBehindTtl() {
+        String tx = TestTx.buildBase64(TestTx.Spec.defaults());
+        chain.includedDepth = FakeChainService.NOT_SEEN;
+        SettleResponse first = service.settle(payload(tx), requirements());
+        chain.currentSlot = 1_000_400;
+        chain.observedTipSlot = 1_000_050L;
+        assertThat(service.settle(payload(tx), requirements()).errorReason()).isEqualTo("settlement_pending");
+        assertThat(repo.find(first.transaction()).orElseThrow().status())
+                .isEqualTo(SettlementRecord.Status.NOT_CONFIRMED);
+        chain.observedTipSlot = 1_000_121L;
+        assertThat(service.settle(payload(tx), requirements()).extra()).containsEntry("status", "expired");
+        assertThat(chain.submitCount).isEqualTo(1);
+    }
+
+    @Test
+    void unknownIndexCoverageNeverExpiresOrRebroadcastsAfterTtl() {
+        String tx = TestTx.buildBase64(TestTx.Spec.defaults());
+        chain.includedDepth = FakeChainService.NOT_SEEN;
+        SettleResponse first = service.settle(payload(tx), requirements());
+        chain.currentSlot = 2_000_000;
+        chain.observedTipSlot = -1L;
+        for (int retry = 0; retry < 3; retry++) {
+            assertThat(service.settle(payload(tx), requirements()).errorReason()).isEqualTo("settlement_pending");
+        }
+        assertThat(repo.find(first.transaction()).orElseThrow().status()).isEqualTo(SettlementRecord.Status.NOT_CONFIRMED);
+        assertThat(chain.submitCount).isEqualTo(1);
+        chain.includedDepth = 3;
+        assertThat(service.settle(payload(tx), requirements()).success()).isTrue();
     }
 
     @Test

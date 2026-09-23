@@ -45,6 +45,13 @@ class FacilitatorControllerTest {
     }
 
     @Test
+    void paymentEndpointDoesNotInterpretApiKeyHeader() throws Exception {
+        mvc.perform(post("/verify").header("X-API-Key", "unrecognized")
+                        .contentType(APPLICATION_JSON).content("{\"x402Version\":2}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
     void verifyUnregisteredNetworkIs500WithError() throws Exception {
         String body = """
                 {"x402Version":2,
@@ -68,9 +75,13 @@ class FacilitatorControllerTest {
     @Test
     void healthSummarizesNetworks() throws Exception {
         mvc.perform(get("/health"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status").value("ok"))
-                .andExpect(jsonPath("$.networks[0].id").value("cardano:preprod"));
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.status").value("unavailable"))
+                .andExpect(jsonPath("$.networks[0].id").value("cardano:preprod"))
+                .andExpect(jsonPath("$.networks[0].healthy").value(false));
+        mvc.perform(get("/actuator/health/readiness"))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.status").value("DOWN"));
     }
 
     @Test

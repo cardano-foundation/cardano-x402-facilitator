@@ -16,7 +16,6 @@ import org.springframework.stereotype.Component;
 public class StartupValidation implements InitializingBean {
 
     private final X402Properties props;
-
     @Override
     public void afterPropertiesSet() {
         if (props.networks() == null || props.networks().isEmpty()) {
@@ -37,4 +36,5 @@ public class StartupValidation implements InitializingBean {
             }
         }
     }
+
 }

@@ -187,6 +187,11 @@ public class SettlementService {
                     ? SettleResponse.ok(rec.txHash(), network, payer, "mempool")
                     : SettleResponse.pending(rec.txHash(), network, payer, -1);
         }
+        if (rec.status() == Status.CONFIRMED && evidence instanceof InclusionResult.NotSeen absent
+                && (absent.observedThroughSlot() < 0 || rec.confirmedSlot() == null
+                    || absent.observedThroughSlot() < rec.confirmedSlot())) {
+            return SettleResponse.pending(rec.txHash(), network, payer);
+        }
         if (rec.status() == Status.CONFIRMED) {
             repo.recordObservation(rec, Status.SUBMITTED, Map.of());
         } else if (rec.status() == Status.SUBMITTED) {
@@ -201,14 +206,16 @@ public class SettlementService {
     /** A historical EXPIRED status alone is insufficient, especially for V1 horizon-expired rows. */
     private SettleResponse expireIfProven(SettlementRecord rec, InclusionResult evidence,
                                          String network, String payer) {
-        if (!(evidence instanceof InclusionResult.NotSeen) || rec.txTtlSlot() == null) return null;
+        if (!(evidence instanceof InclusionResult.NotSeen absent) || rec.txTtlSlot() == null) return null;
         long currentSlot;
         try {
             currentSlot = chain.getCurrentSlot();
         } catch (RuntimeException e) {
             return null;
         }
-        if (currentSlot <= rec.txTtlSlot() || currentSlot - rec.txTtlSlot() <= 120) return null;
+        if (currentSlot <= rec.txTtlSlot() || currentSlot - rec.txTtlSlot() <= 120
+                || absent.observedThroughSlot() <= rec.txTtlSlot()
+                || absent.observedThroughSlot() - rec.txTtlSlot() <= 120) return null;
         if (!repo.recordObservation(rec, Status.EXPIRED, Map.of())) {
             return SettleResponse.pending(rec.txHash(), network, payer);
         }
