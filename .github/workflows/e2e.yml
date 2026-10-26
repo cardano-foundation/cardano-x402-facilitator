@@ -1,0 +1,61 @@
+name: E2E (devnet)
+
+# Black-box e2e: build the facilitator image, start it against a Yaci DevKit devnet
+# posing as cardano:preview, and drive every route with real signed transactions.
+# Everything runs through e2e/run.sh, which works the same way locally.
+on:
+  pull_request:
+    types: [ opened, synchronize, reopened ]
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      E2E_IMAGE: x402-facilitator:e2e
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build facilitator image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          tags: ${{ env.E2E_IMAGE }}
+          load: true
+          cache-from: type=gha,scope=facilitator
+          cache-to: type=gha,mode=max,scope=facilitator
+
+      - name: Build devkit image
+        uses: docker/build-push-action@v6
+        with:
+          context: e2e/devnet
+          platforms: linux/amd64
+          tags: x402-e2e-devkit:local
+          load: true
+          cache-from: type=gha,scope=devkit
+          cache-to: type=gha,mode=max,scope=devkit
+
+      - name: Devnet stack smoke
+        run: e2e/run.sh --smoke
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-logs
+          path: e2e/.out/
+          if-no-files-found: ignore
