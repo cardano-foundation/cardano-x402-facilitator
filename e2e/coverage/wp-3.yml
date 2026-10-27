@@ -1,0 +1,6 @@
+# Error codes asserted by WP-3 (settlement semantics), keyed by ErrorCodes constant name.
+# Merged and checked by ErrorCodeCoverageTest (WP-4). A constant appears in one fragment only:
+# NONCE_NOT_ON_CHAIN is also asserted here (verify after settle) but is owned by WP-4's matrix.
+DUPLICATE_SETTLEMENT:
+  tests:
+    - SettlementSemanticsE2ETest#theSameTransactionUnderDifferentRequirementsIsADuplicate

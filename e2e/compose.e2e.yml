@@ -1,0 +1,74 @@
+# Devnet e2e stack. Driven by e2e/run.sh — start order matters (devkit healthy ->
+# render NETWORKS_FILE from its live genesis start -> the rest), so do not
+# `docker compose up` everything at once by hand.
+#
+#   devkit               Yaci DevKit (npm, yano-only, magic 2) — poses as cardano:preview
+#   shim                 Blockfrost compat shim in front of Yano (see e2e/shim/)
+#   postgres             journals: database `postgres` and `facilitator_mempool`
+#   facilitator          image under test, default settings
+#   facilitator-mempool  same image, x402.settle.accept-mempool=true, own database
+name: ${E2E_COMPOSE_PROJECT:-x402-e2e}
+
+services:
+  devkit:
+    build:
+      context: devnet
+    image: x402-e2e-devkit:local
+    platform: linux/amd64
+    ports:
+      - "127.0.0.1:${E2E_YANO_HTTP_PORT:-6060}:6060"
+      - "127.0.0.1:${E2E_ADMIN_PORT:-10000}:10000"
+
+  shim:
+    image: python:3.12-alpine
+    command: ["python", "-I", "/shim/yano_genesis_shim.py", "http://devkit:6060", "16061"]
+    volumes:
+      - ./shim:/shim:ro
+    ports:
+      - "127.0.0.1:${E2E_SHIM_PORT:-16061}:16061"
+    depends_on:
+      devkit:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - ./postgres:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d facilitator_mempool"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  facilitator: &facilitator
+    image: ${E2E_IMAGE:-x402-facilitator:e2e}
+    platform: linux/amd64
+    environment:
+      # Journals are isolated by database: FlywayConfig hardcodes the `facilitator`
+      # schema, so DB_SCHEMA cannot separate two instances.
+      DB_URL: jdbc:postgresql://postgres:5432/postgres
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      NETWORKS_FILE: file:/e2e/networks.yml
+    volumes:
+      - ./.out/networks.yml:/e2e/networks.yml:ro
+    ports:
+      - "127.0.0.1:${E2E_FACILITATOR_PORT:-4022}:4022"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      shim:
+        condition: service_started
+
+  facilitator-mempool:
+    <<: *facilitator
+    environment:
+      DB_URL: jdbc:postgresql://postgres:5432/facilitator_mempool
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      NETWORKS_FILE: file:/e2e/networks.yml
+      X402_SETTLE_ACCEPTMEMPOOL: "true"
+    ports:
+      - "127.0.0.1:${E2E_FACILITATOR_MEMPOOL_PORT:-4023}:4022"
