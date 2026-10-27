@@ -1,8 +1,10 @@
 name: E2E (devnet)
 
 # Black-box e2e: build the facilitator image, start it against a Yaci DevKit devnet
-# posing as cardano:preview, and drive every route with real signed transactions.
-# Everything runs through e2e/run.sh, which works the same way locally.
+# posing as cardano:preview, and drive every route and transfer method with real
+# signed transactions — from Java (cardano-client-lib) and from the published
+# @x402 TypeScript SDK. Everything runs through e2e/run.sh, which works the same
+# way locally. See docs/testing.md#devnet-e2e.
 on:
   pull_request:
     types: [ opened, synchronize, reopened ]
@@ -27,6 +29,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: e2e/ts/package-lock.json
+
       - uses: docker/setup-buildx-action@v3
 
       - name: Build facilitator image
@@ -49,13 +63,16 @@ jobs:
           cache-from: type=gha,scope=devkit
           cache-to: type=gha,mode=max,scope=devkit
 
-      - name: Devnet stack smoke
-        run: e2e/run.sh --smoke
+      - name: Devnet e2e (TypeScript SDK, Java suite, then the outage pass)
+        run: e2e/run.sh
 
-      - name: Upload logs
+      - name: Upload test reports and stack logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-logs
-          path: e2e/.out/
+          name: e2e-reports
+          # e2e/.out: junit/{java-main,java-outage,ts.xml}, logs/*, networks.yml
+          path: |
+            e2e/.out/
+            build/reports/tests/e2eTest/
           if-no-files-found: ignore

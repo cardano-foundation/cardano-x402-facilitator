@@ -15,6 +15,15 @@ What it adds (never forwarded upstream): ``GET /__shim/submits?sha256=<hex>`` re
 how many ``POST */tx/submit`` requests carried a body with that SHA-256, so the
 suite can prove a payment was broadcast exactly once.
 
+The ``/sdk`` prefix (``/sdk/api/v1/...``) is a second view, for the TypeScript
+SDK suite only. The Evolution SDK's Blockfrost provider validates responses
+strictly, and Yano differs from Blockfrost in two more places:
+``GET */addresses/{addr}/utxos`` omits ``tx_index`` (added, = ``output_index``),
+and ``GET */epochs/latest/parameters`` returns ``drep_deposit`` and
+``gov_action_deposit`` as numbers (stringified). The facilitator never uses
+``/sdk``, so its view stays exactly the plain pass-through above.
+Upstream issue: TODO(link once filed).
+
 Usage: python -I yano_genesis_shim.py <upstream-base-url> [port]
 """
 
@@ -35,6 +44,27 @@ FORWARDED_HEADERS = ("content-type", "project_id", "accept")
 
 _submits = {}
 _submits_lock = threading.Lock()
+
+
+SDK_PREFIX = "/sdk"
+STRING_PARAMS = ("drep_deposit", "gov_action_deposit")
+
+
+def _rewrite_utxos(body):
+    utxos = json.loads(body)
+    if isinstance(utxos, list):
+        for utxo in utxos:
+            if isinstance(utxo, dict) and "tx_index" not in utxo and "output_index" in utxo:
+                utxo["tx_index"] = utxo["output_index"]
+    return json.dumps(utxos).encode()
+
+
+def _rewrite_parameters(body):
+    params = json.loads(body)
+    for key in STRING_PARAMS:
+        if isinstance(params.get(key), (int, float)):
+            params[key] = str(params[key])
+    return json.dumps(params).encode()
 
 
 def _rewrite_genesis(body):
@@ -68,13 +98,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._shim_endpoint()
         length = int(self.headers.get("Content-Length") or 0)
         body = self.rfile.read(length) if length else None
-        path = urllib.parse.urlparse(self.path).path
+        sdk = self.path.startswith(SDK_PREFIX + "/")
+        upstream_path = self.path[len(SDK_PREFIX):] if sdk else self.path
+        path = urllib.parse.urlparse(upstream_path).path
         if self.command == "POST" and path.rstrip("/").endswith("/tx/submit") and body is not None:
             digest = hashlib.sha256(body).hexdigest()
             with _submits_lock:
                 _submits[digest] = _submits.get(digest, 0) + 1
         headers = {k: v for k, v in self.headers.items() if k.lower() in FORWARDED_HEADERS}
-        request = urllib.request.Request(UPSTREAM + self.path, data=body, method=self.command, headers=headers)
+        request = urllib.request.Request(UPSTREAM + upstream_path, data=body, method=self.command, headers=headers)
         try:
             with urllib.request.urlopen(request, timeout=30) as response:
                 code, data, content_type = response.status, response.read(), response.headers.get("Content-Type")
@@ -89,6 +121,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             data = gzip.decompress(data)
         if self.command == "GET" and code == 200 and path.rstrip("/").endswith("/genesis"):
             data = _rewrite_genesis(data)
+        if sdk and self.command == "GET" and code == 200 and path.rstrip("/").endswith("/utxos"):
+            data = _rewrite_utxos(data)
+        if sdk and self.command == "GET" and code == 200 and path.rstrip("/").endswith("/parameters"):
+            data = _rewrite_parameters(data)
         self._send(code, data, content_type)
 
     do_GET = do_POST = _proxy

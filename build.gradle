@@ -55,6 +55,50 @@ dependencies {
 
 tasks.named('test') { useJUnitPlatform() }
 
+// Black-box devnet suite: drives the facilitator CONTAINER over HTTP against a Yaci
+// DevKit devnet. Needs the stack from e2e/run.sh, so nothing (test, check, bootJar)
+// depends on it — run it through e2e/run.sh --java.
+sourceSets {
+    e2eTest {
+        compileClasspath += sourceSets.main.output + sourceSets.test.output
+        runtimeClasspath += sourceSets.main.output + sourceSets.test.output
+    }
+}
+
+configurations {
+    e2eTestImplementation.extendsFrom testImplementation
+    e2eTestRuntimeOnly.extendsFrom testRuntimeOnly
+}
+
+dependencies {
+    e2eTestCompileOnly 'org.projectlombok:lombok'
+    e2eTestAnnotationProcessor 'org.projectlombok:lombok'
+    e2eTestImplementation 'com.networknt:json-schema-validator:1.5.1'
+}
+
+tasks.register('e2eTest', Test) {
+    group = 'verification'
+    description = 'Runs the devnet e2e suite against a running stack (use e2e/run.sh --java)'
+    testClassesDirs = sourceSets.e2eTest.output.classesDirs
+    classpath = sourceSets.e2eTest.runtimeClasspath
+    useJUnitPlatform {
+        // e2e/run.sh runs the outage tests last, in their own invocation.
+        if (project.hasProperty('includeTags')) includeTags(*project.property('includeTags').split(','))
+        if (project.hasProperty('excludeTags')) excludeTags(*project.property('excludeTags').split(','))
+    }
+    // The stack, not the sources, decides the outcome: never skip as up-to-date.
+    outputs.upToDateWhen { false }
+    // e2e/run.sh runs two passes (main, outage); each keeps its own JUnit XML.
+    if (project.hasProperty('e2eResultsDir')) {
+        reports.junitXml.outputLocation = file(project.property('e2eResultsDir'))
+    }
+    shouldRunAfter tasks.named('test')
+    testLogging {
+        events 'passed', 'skipped', 'failed'
+        exceptionFormat 'full'
+    }
+}
+
 tasks.register('interop', JavaExec) {
     group = 'verification'
     description = 'Checks the real Java HTTP endpoints using @x402/cardano and @x402/core 2.26.0 (offline chain)'

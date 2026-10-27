@@ -21,9 +21,12 @@ The upgrade includes TypeScript-generated signed vectors, a real HTTP SDK
 interoperability gate, and PostgreSQL migration/concurrency tests. See
 [testing](docs/testing.md) and [upgrade notes](docs/upstream-compatibility.md).
 
-An earlier version was proven on preprod. This upgrade's verification uses a
-controlled offline chain; it has not repeated that live proof or run on mainnet.
-The full self-hosted Compose stack is not exercised by these tests.
+Every PR and push to `main` runs a [devnet end-to-end suite](docs/testing.md#devnet-e2e):
+the shipped container image against a Yaci DevKit ledger, with real signed
+transactions from Java and from the published TypeScript SDK, covering every route,
+all three transfer methods and every reachable error code. An earlier version was
+proven on preprod; nothing has run on mainnet. The full self-hosted Compose stack is
+not exercised by these tests.
 
 ## Features
 

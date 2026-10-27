@@ -1,0 +1,17 @@
+{
+  "name": "cardano-x402-facilitator-e2e-ts",
+  "private": true,
+  "type": "module",
+  "description": "Devnet e2e: the published @x402 TypeScript SDK pays through the facilitator container. Run via e2e/run.sh --ts.",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test --test-concurrency=1 --test-reporter=spec --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination=../.out/junit/ts.xml 'test/*.test.mjs'"
+  },
+  "dependencies": {
+    "@evolution-sdk/evolution": "0.5.9",
+    "@x402/cardano": "2.26.0",
+    "@x402/core": "2.26.0"
+  }
+}

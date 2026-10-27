@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "x402 v2 /supported response, with the Cardano kind extra block.",
+  "type": "object",
+  "required": ["kinds", "extensions", "signers"],
+  "additionalProperties": false,
+  "properties": {
+    "kinds": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["x402Version", "scheme", "network", "extra"],
+        "additionalProperties": false,
+        "properties": {
+          "x402Version": { "const": 2 },
+          "scheme": { "const": "exact" },
+          "network": { "type": "string", "pattern": "^cardano:[a-z]+$" },
+          "extra": {
+            "type": "object",
+            "required": ["assetTransferMethods", "areFeesSponsored", "l1Confirmations"],
+            "additionalProperties": false,
+            "properties": {
+              "assetTransferMethods": {
+                "type": "array",
+                "uniqueItems": true,
+                "items": { "enum": ["default", "masumi", "script"] }
+              },
+              "areFeesSponsored": { "type": "boolean" },
+              "l1Confirmations": {
+                "type": "object",
+                "required": ["minimum", "maximum"],
+                "additionalProperties": false,
+                "properties": {
+                  "minimum": { "type": "integer", "minimum": -1 },
+                  "maximum": { "type": "integer", "minimum": 0 }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "extensions": { "type": "array", "items": { "type": "string" } },
+    "signers": {
+      "type": "object",
+      "additionalProperties": { "type": "array", "items": { "type": "string" } }
+    }
+  }
+}

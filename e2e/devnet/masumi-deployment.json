@@ -1,21 +1,25 @@
 {
-  "comment": "Fixed Masumi vested_pay V2 deployments for the devnet. cardano:preview has no canonical deployment, so payments carry extra.deployment and the allowlisted hash is rendered into NETWORKS_FILE before the facilitators start. Hashes derive from MasumiBlueprint.escrowScriptHash; MasumiTransferE2ETest re-derives and compares them.",
+  "comment": "Fixed Masumi vested_pay V2 deployments for the devnet. cardano:preview has no canonical deployment, so payments carry extra.deployment and the allowlisted hash is rendered into NETWORKS_FILE before the facilitators start. Admin vkeys are 28-byte key hashes. Hashes derive from MasumiBlueprint.escrowScriptHash and agree with @x402/cardano 2.26.0 masumiEscrowScriptHash; MasumiTransferE2ETest re-derives and compares them.",
   "allowlisted": {
     "deployment": {
       "requiredAdmins": "1",
-      "adminVkeys": ["e2e0000000000000000000000000000000000000000000000000000001"],
+      "adminVkeys": [
+        "e2e00000000000000000000000000000000000000000000000000001"
+      ],
       "cooldownPeriod": "0"
     },
-    "scriptHash": "1a7963691cbb08869ea72bb9cf9d1a92baf7f421ad7c4a9d60ab5d91",
-    "escrowAddress": "addr_test1wqd8jcmfrjas3p575u4mnnuar2ft4al5yxkhcj5avz44mygw88unq"
+    "scriptHash": "cfd39d8d15c65c42e6209e0ce3ca0e92bd5cf5022857bd6a071f12b3",
+    "escrowAddress": "addr_test1wr8a88vdzhr9cshxyz0qec72p6ft6h84qg5900t2qu039vcl0nn0n"
   },
   "notAllowlisted": {
     "deployment": {
       "requiredAdmins": "1",
-      "adminVkeys": ["e2e0000000000000000000000000000000000000000000000000000002"],
+      "adminVkeys": [
+        "e2e00000000000000000000000000000000000000000000000000002"
+      ],
       "cooldownPeriod": "0"
     },
-    "scriptHash": "3c77ab0ab6c6bbf17231a7ade10e79dfc8cbc6738e44f8707da440a1",
-    "escrowAddress": "addr_test1wq7802c2kmrthutjxxn6mcgw080u3j7xww8yf7rs0kjypgggh9uqf"
+    "scriptHash": "cc3ea4d56ea6cec427a909f08a221269e0ca71aba062e8c01d8817c6",
+    "escrowAddress": "addr_test1wrxrafx4d6nva3p84yylpz3zzf57pjn34wsx96xqrkyp03s4c2juk"
   }
 }

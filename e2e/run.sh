@@ -28,6 +28,7 @@ export FACILITATOR_URL="http://127.0.0.1:$E2E_FACILITATOR_PORT"
 export FACILITATOR_MEMPOOL_URL="http://127.0.0.1:$E2E_FACILITATOR_MEMPOOL_PORT"
 export E2E_CHAIN_URL="http://127.0.0.1:$E2E_YANO_HTTP_PORT/api/v1"   # Yano direct, never via the shim
 export E2E_SHIM_URL="http://127.0.0.1:$E2E_SHIM_PORT"
+export E2E_SDK_CHAIN_URL="$E2E_SHIM_URL/sdk/api/v1"                 # the TS SDK's provider (see e2e/shim/)
 export E2E_ADMIN_URL="http://127.0.0.1:$E2E_ADMIN_PORT"
 export E2E_COMPOSE_FILE="$E2E/compose.e2e.yml"
 export E2E_MASUMI_DEPLOYMENT="$E2E/devnet/masumi-deployment.json"
@@ -63,12 +64,13 @@ ready() { curl -fsS "$1/actuator/health/readiness" | grep -q '"UP"'; }
 
 cleanup() {
   local status=$?
+  # Logs are kept on every run (CI uploads them); the tails print only on failure.
+  mkdir -p "$OUT/logs"
+  for svc in devkit shim postgres facilitator facilitator-mempool; do
+    compose logs --no-color "$svc" >"$OUT/logs/$svc.log" 2>&1 || true
+  done
+  compose exec -T devkit cat /tmp/devkit.log >"$OUT/logs/devkit-cli.log" 2>/dev/null || true
   if ((status != 0)); then
-    mkdir -p "$OUT/logs"
-    for svc in devkit shim postgres facilitator facilitator-mempool; do
-      compose logs --no-color "$svc" >"$OUT/logs/$svc.log" 2>&1 || true
-    done
-    compose exec -T devkit cat /tmp/devkit.log >"$OUT/logs/devkit-cli.log" 2>/dev/null || true
     for svc in facilitator facilitator-mempool shim devkit-cli; do
       printf '\n--- tail %s ---\n' "$svc" >&2
       tail -n 40 "$OUT/logs/$svc.log" >&2 || true
@@ -120,14 +122,32 @@ echo "stack is up: facilitator=$FACILITATOR_URL mempool=$FACILITATOR_MEMPOOL_URL
 
 run_java() {
   log "Java e2e suite"
+  if ((${#GRADLE_ARGS[@]})); then
+    # Explicit args (e.g. --tests '*RoutesE2ETest') run once: split across the two
+    # tag passes, one of them would match nothing and fail. The outage tests pause
+    # the shim under everything else, so they stay excluded unless the args pick
+    # tags themselves (-PincludeTags=outage runs just them).
+    local tagged=0 arg
+    for arg in "${GRADLE_ARGS[@]}"; do
+      [[ "$arg" == -PincludeTags=* || "$arg" == -PexcludeTags=* ]] && tagged=1
+    done
+    if ((tagged)); then
+      "$ROOT/gradlew" -p "$ROOT" e2eTest "${GRADLE_ARGS[@]}"
+    else
+      "$ROOT/gradlew" -p "$ROOT" e2eTest -PexcludeTags=outage "${GRADLE_ARGS[@]}"
+    fi
+    return
+  fi
   # The outage tests pause the shim, so they run last, in their own invocation.
-  "$ROOT/gradlew" -p "$ROOT" e2eTest -PexcludeTags=outage ${GRADLE_ARGS[@]+"${GRADLE_ARGS[@]}"}
-  "$ROOT/gradlew" -p "$ROOT" e2eTest -PincludeTags=outage ${GRADLE_ARGS[@]+"${GRADLE_ARGS[@]}"}
+  # set -e does not apply inside a function called with ||: each step returns its own failure.
+  "$ROOT/gradlew" -p "$ROOT" e2eTest -PexcludeTags=outage -Pe2eResultsDir="$OUT/junit/java-main" || return
+  "$ROOT/gradlew" -p "$ROOT" e2eTest -PincludeTags=outage -Pe2eResultsDir="$OUT/junit/java-outage"
 }
 
 run_ts() {
   log "TypeScript SDK e2e suite"
-  npm ci --prefix "$E2E/ts" --ignore-scripts
+  mkdir -p "$OUT/junit"
+  npm ci --prefix "$E2E/ts" --ignore-scripts || return
   npm test --prefix "$E2E/ts"
 }
 
@@ -135,6 +155,12 @@ case "$MODE" in
   smoke) ;;
   java) run_java ;;
   ts) run_ts ;;
-  all) run_ts; run_java ;;
+  all)
+    # Both suites always run, so one red never hides the other's results.
+    ts_status=0 java_status=0
+    run_ts || ts_status=$?
+    run_java || java_status=$?
+    ((ts_status == 0 && java_status == 0)) || fail "TypeScript suite exit $ts_status, Java suite exit $java_status"
+    ;;
 esac
 log "e2e $MODE: PASSED"
