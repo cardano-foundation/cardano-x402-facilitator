@@ -1,0 +1,25 @@
+{
+  "comment": "Fixed Masumi vested_pay V2 deployments for the devnet. cardano:preview has no canonical deployment, so payments carry extra.deployment and the allowlisted hash is rendered into NETWORKS_FILE before the facilitators start. Admin vkeys are 28-byte key hashes. Hashes derive from MasumiBlueprint.escrowScriptHash and agree with @x402/cardano 2.26.0 masumiEscrowScriptHash; MasumiTransferE2ETest re-derives and compares them.",
+  "allowlisted": {
+    "deployment": {
+      "requiredAdmins": "1",
+      "adminVkeys": [
+        "e2e00000000000000000000000000000000000000000000000000001"
+      ],
+      "cooldownPeriod": "0"
+    },
+    "scriptHash": "cfd39d8d15c65c42e6209e0ce3ca0e92bd5cf5022857bd6a071f12b3",
+    "escrowAddress": "addr_test1wr8a88vdzhr9cshxyz0qec72p6ft6h84qg5900t2qu039vcl0nn0n"
+  },
+  "notAllowlisted": {
+    "deployment": {
+      "requiredAdmins": "1",
+      "adminVkeys": [
+        "e2e00000000000000000000000000000000000000000000000000002"
+      ],
+      "cooldownPeriod": "0"
+    },
+    "scriptHash": "cc3ea4d56ea6cec427a909f08a221269e0ca71aba062e8c01d8817c6",
+    "escrowAddress": "addr_test1wrxrafx4d6nva3p84yylpz3zzf57pjn34wsx96xqrkyp03s4c2juk"
+  }
+}

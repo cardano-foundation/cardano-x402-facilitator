@@ -5,22 +5,36 @@ import java.util.concurrent.*;
 
 /**
  * A request has at most 64 external lookup calls and ten seconds for all of them together.
- * SDK calls run in a shared, bounded, non-queuing pool: even a provider that ignores
- * interruption cannot accumulate unlimited timed-out work. Saturation fails closed.
+ * SDK calls run in a shared pool of at most {@value #THREADS} threads, so even a provider
+ * that ignores interruption cannot accumulate unlimited timed-out work. A call that finds
+ * every thread busy waits in a bounded queue, but only for its request's remaining budget;
+ * then it is cancelled and removed, and never runs. A full queue fails closed at once.
+ * Never wait on this pool while holding a monitor, and never call it from inside a lookup
+ * that already runs on it: eight such parents would wait on their own queued children.
  */
 public final class LookupBudget {
     public static final int MAX_CALLS = 64;
     public static final Duration TIMEOUT = Duration.ofSeconds(10);
+    static final int THREADS = 8;
+    /**
+     * Lookups within one request run one after another, so a request holds at most one
+     * queued call: 64 slots cover 72 concurrent requests. A deeper queue would only turn
+     * fast failures into ten-second ones.
+     */
+    static final int QUEUE_CAPACITY = 64;
     private static final ExecutorService CALLS = newExecutor();
 
     // The same bounded policy is used by isolated executor tests.
     static ExecutorService newExecutor() {
-        return new ThreadPoolExecutor(0, 8, 30, TimeUnit.SECONDS,
-            new SynchronousQueue<>(), runnable -> {
+        ThreadPoolExecutor executor = new ThreadPoolExecutor(THREADS, THREADS, 30, TimeUnit.SECONDS,
+            new ArrayBlockingQueue<>(QUEUE_CAPACITY), runnable -> {
                 Thread thread = new Thread(runnable, "chain-lookup");
                 thread.setDaemon(true);
                 return thread;
             }, new ThreadPoolExecutor.AbortPolicy());
+        // Idle threads still retire after 30 s, as with the former core size of 0.
+        executor.allowCoreThreadTimeOut(true);
+        return executor;
     }
 
     private final ExecutorService executor;
@@ -74,7 +88,11 @@ public final class LookupBudget {
             if (e.getCause() instanceof ChainLookupException lookup) throw lookup;
             throw new ChainLookupException("provider lookup failed", e.getCause());
         } finally {
-            if (!future.isDone()) future.cancel(true);
+            if (!future.isDone()) {
+                future.cancel(true);
+                // A cancelled task never runs, but it would still hold its queue slot.
+                if (executor instanceof ThreadPoolExecutor pool) pool.remove((Runnable) future);
+            }
         }
     }
 

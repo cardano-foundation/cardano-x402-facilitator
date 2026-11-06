@@ -1,0 +1,29 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "schedule": ["before 6am on monday"],
+  "automerge": false,
+  "enabledManagers": ["gradle", "gradle-wrapper", "npm", "dockerfile", "docker-compose", "github-actions", "custom.regex"],
+  "packageRules": [
+    {
+      "description": "The SDK pins in interop/ and e2e/ts/ must move together.",
+      "groupName": "x402 TypeScript SDK",
+      "matchPackageNames": ["@x402/**", "@evolution-sdk/**"]
+    },
+    {
+      "description": "One cardano-client-lib version across all its modules.",
+      "groupName": "cardano-client-lib",
+      "matchPackageNames": ["com.bloxbean.cardano:cardano-client-**"]
+    }
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "The devnet's Yaci DevKit version (e2e/devnet/Dockerfile).",
+      "managerFilePatterns": ["/^e2e/devnet/Dockerfile$/"],
+      "matchStrings": ["ARG YACI_DEVKIT_VERSION=(?<currentValue>\\S+)"],
+      "depNameTemplate": "@bloxbean/yaci-devkit",
+      "datasourceTemplate": "npm"
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "x402 v2 /verify response. Nulls are omitted (NON_NULL); payer is always present, \"\" when unknown.",
+  "type": "object",
+  "required": ["isValid", "payer"],
+  "additionalProperties": false,
+  "properties": {
+    "isValid": { "type": "boolean" },
+    "invalidReason": { "type": "string", "pattern": "^[a-z0-9_]+$" },
+    "invalidMessage": { "type": "string" },
+    "payer": { "type": "string" }
+  },
+  "if": { "properties": { "isValid": { "const": false } } },
+  "then": { "required": ["invalidReason"] },
+  "else": {
+    "not": { "anyOf": [{ "required": ["invalidReason"] }, { "required": ["invalidMessage"] }] },
+    "properties": { "payer": { "pattern": "^addr(_test)?1[0-9a-z]+$" } }
+  }
+}
