@@ -1,0 +1,23 @@
+# Per advertised assetTransferMethod (X402FacilitatorRegistry), the positive tests that cover it.
+# Checked by TransferMethodCoverageTest (`./gradlew test`): every method needs at least one Java e2e
+# test (Class#method in src/e2eTest, resolved like the error-code gate) that settles a payment, and
+# at least one TS SDK test name present in e2e/ts/test/*.mjs. An unlisted or stale method fails.
+default:
+  java:
+    - DefaultTransferE2ETest#adaPayment
+    - DefaultTransferE2ETest#nativeTokenPayment
+  ts:
+    - "default method, ADA"
+    - "default method, native token"
+masumi:
+  java:
+    - MasumiTransferE2ETest#anAdaLockIsSettledAndItsDatumIsOnChain
+    - MasumiTransferE2ETest#aTokenLockIsSettledAndItsDatumIsOnChain
+  ts:
+    - "masumi method, ADA lock into the allowlisted devnet deployment"
+    - "masumi method, native-token lock"
+script:
+  java:
+    - ScriptTransferE2ETest#plutusV3ScriptCode
+  ts:
+    - "script method (always-succeeds PlutusV3, payTo its script address)"

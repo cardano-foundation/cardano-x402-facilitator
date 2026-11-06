@@ -70,5 +70,6 @@ services:
       DB_PASSWORD: postgres
       NETWORKS_FILE: file:/e2e/networks.yml
       X402_SETTLE_ACCEPTMEMPOOL: "true"
+      X402_HTTP_CORSALLOWEDORIGINS: https://allowed.e2e.test
     ports:
       - "127.0.0.1:${E2E_FACILITATOR_MEMPOOL_PORT:-4023}:4022"

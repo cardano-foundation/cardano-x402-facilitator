@@ -3,6 +3,7 @@ package org.cardanofoundation.x402.facilitator.e2e.kit;
 import com.bloxbean.cardano.client.account.Account;
 import com.bloxbean.cardano.client.api.model.Amount;
 import com.bloxbean.cardano.client.function.helper.SignerProviders;
+import com.bloxbean.cardano.client.function.TxBuilder;
 import com.bloxbean.cardano.client.metadata.Metadata;
 import com.bloxbean.cardano.client.plutus.spec.PlutusData;
 import com.bloxbean.cardano.client.quicktx.QuickTxBuilder;
@@ -95,6 +96,9 @@ public final class PaymentFactory {
         private long ttlSlots = DEFAULT_TTL_SLOTS;
         private Metadata metadata;
         private PlutusData inlineDatum;
+        private Consumer<Tx> customize;
+        private TxBuilder preBalance;
+        private int nonceInput;
 
         private Spec(Wallet payer) {
             this.payer = payer;
@@ -134,7 +138,6 @@ public final class PaymentFactory {
             return this;
         }
 
-        /** Attaches auxiliary data; QuickTx sets the matching body hash. */
         /**
          * Puts an INLINE datum on the paid output (script and Masumi escrow locks).
          * The paid output carries the token or the lovelace amount, plus whatever
@@ -145,8 +148,33 @@ public final class PaymentFactory {
             return this;
         }
 
+        /** Attaches auxiliary data; QuickTx sets the matching body hash. */
         public Spec metadata(Metadata metadata) {
             this.metadata = metadata;
+            return this;
+        }
+
+        /** Edits the QuickTx {@link Tx} after the payment is composed and before it is built. */
+        public Spec customize(Consumer<Tx> customize) {
+            this.customize = customize;
+            return this;
+        }
+
+        /**
+         * Passed to {@code QuickTxBuilder.TxContext#preBalanceTx}: for body fields 0.7.2's
+         * {@link Tx} cannot express (reference inputs, a bare native-script witness).
+         */
+        public Spec preBalance(TxBuilder preBalance) {
+            this.preBalance = preBalance;
+            return this;
+        }
+
+        /**
+         * Which input of the BUILT transaction becomes {@code payload.nonce} (default 0, the
+         * first). The index is into the body's input list as built.
+         */
+        public Spec nonceInput(int index) {
+            this.nonceInput = index;
             return this;
         }
 
@@ -167,13 +195,16 @@ public final class PaymentFactory {
                     : new Tx().payToContract(payTo, value, inlineDatum))
                     .from(payer.address());
             if (metadata != null) tx.attachMetadata(metadata);
+            if (customize != null) customize.accept(tx);
 
-            Transaction signed = new QuickTxBuilder(kit.getBackend()).compose(tx)
-                    .validTo(kit.tipSlot() + ttlSlots)
+            QuickTxBuilder.TxContext context = new QuickTxBuilder(kit.getBackend()).compose(tx)
+                    .validTo(kit.tipSlot() + ttlSlots);
+            if (preBalance != null) context = context.preBalanceTx(preBalance);
+            Transaction signed = context
                     .withSigner(SignerProviders.signerFrom(payer.account()))
                     .buildAndSign();
             byte[] bytes = DevnetKit.serialize(signed);
-            TransactionInput first = signed.getBody().getInputs().get(0);
+            TransactionInput first = signed.getBody().getInputs().get(nonceInput);
 
             Map<String, Object> requirements = new LinkedHashMap<>();
             requirements.put("scheme", "exact");

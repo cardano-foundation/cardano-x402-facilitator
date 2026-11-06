@@ -44,6 +44,11 @@ public final class DevnetKit {
 
     private static final Duration CHAIN_DEADLINE = Duration.ofSeconds(120);
     private static final int UTXO_PAGE = 100;
+    /**
+     * The faucet spends its own UTxOs: two top-ups in flight at once (parallel test
+     * classes, Funding's refill) can pick the same input. One at a time, per process.
+     */
+    private static final Object FAUCET = new Object();
 
     @Getter
     private final BackendService backend;
@@ -72,6 +77,12 @@ public final class DevnetKit {
      * @return the new UTxO.
      */
     public Utxo topup(String address, long ada) {
+        synchronized (FAUCET) {
+            return topupExclusively(address, ada);
+        }
+    }
+
+    private Utxo topupExclusively(String address, long ada) {
         Set<String> before = new HashSet<>();
         for (Utxo utxo : utxos(address)) before.add(outRef(utxo));
         FacilitatorClient.Response response = admin.post("/local-cluster/api/addresses/topup",

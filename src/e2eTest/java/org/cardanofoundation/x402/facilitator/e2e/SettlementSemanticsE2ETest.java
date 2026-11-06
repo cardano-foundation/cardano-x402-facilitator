@@ -3,6 +3,7 @@ package org.cardanofoundation.x402.facilitator.e2e;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.cardanofoundation.x402.facilitator.e2e.kit.DevnetKit;
 import org.cardanofoundation.x402.facilitator.e2e.kit.FacilitatorClient;
+import org.cardanofoundation.x402.facilitator.e2e.kit.Funding;
 import org.cardanofoundation.x402.facilitator.e2e.kit.Payment;
 import org.cardanofoundation.x402.facilitator.e2e.kit.PaymentFactory;
 import org.cardanofoundation.x402.facilitator.e2e.kit.Poll;
@@ -54,7 +55,7 @@ class SettlementSemanticsE2ETest {
         facilitator = FacilitatorClient.defaultInstance();
         mempoolFacilitator = FacilitatorClient.mempoolInstance();
         shim = ShimClient.fromEnv();
-        receiver = kit.newWallet(5);
+        receiver = Funding.wallet(5);
     }
 
     // ---- confirmation policy, default instance (accept-mempool false) ----
@@ -82,9 +83,9 @@ class SettlementSemanticsE2ETest {
     }
 
     // Yano's /mempool/{hash} never reports a pending tx, so the facilitator only ever sees
-    // NotSeen -> Included here. A provider that DOES report mempool status takes a different
-    // branch (SettlementService awaits depth -1 raw, then answers settlement_pending): this
-    // test cannot exercise that branch. Recorded in WP-3's Log as a finding.
+    // NotSeen -> Included here. A provider that DOES report mempool status takes another branch;
+    // MempoolEvidenceE2ETest drives it through the shim (without operator opt-in, -1 still waits
+    // for inclusion since WP-15).
     @Test
     void mempoolPolicyStillWaitsForInclusionWhenMempoolAcceptanceIsOff() {
         Payment payment = withPolicy(freshPayment(), -1);
@@ -186,7 +187,7 @@ class SettlementSemanticsE2ETest {
     // ---- helpers ----
 
     private static Payment freshPayment() {
-        return payments.from(kit.newWallet(10)).payTo(receiver).lovelace(2_000_000).build();
+        return payments.from(Funding.wallet(10)).payTo(receiver).lovelace(2_000_000).build();
     }
 
     private static Payment withPolicy(Payment payment, int confirmations) {

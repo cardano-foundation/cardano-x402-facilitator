@@ -1,4 +1,4 @@
-Now: Devnet e2e suite — all 8 work packages implemented and reviewed; final full cold run in progress before staging.
-Next: user pushes the branch; the full `E2E (devnet)` workflow on the PR is WP-8's remaining check (CI wall time unverified).
-Blocked: —
-Updated: 2026-10-27
+Now: Test pipeline target state (plan approved 2026-11-04) is implemented, and WP-9 to WP-19 are staged. That covers one `build.yml` (verify · e2e · publish, with nightly load and canary legs) and one `e2e/run.sh`. It also covers Case rows (shapes, rejections, Masumi), shim faults, restart/Postgres-outage durability, the `-1` mempool depth fix, the lookup-pool wait, Masumi terms reuse, CORS, `LoadE2ETest` and the docs. The final whole-change review is clean (no critical or important findings). The final full fresh `e2e/run.sh` is green: 176 Java + 6 TS tests, 13m 17s. `./gradlew test` passed with 391 tests.
+Next: Your review and commit of the staged change, then your push for the live CI proof (no run of `build.yml` exists yet). Turn on branch protection for `verify` and `E2E (devnet, pr)` after about 10 green runs. Open findings: the swallowed submit stays pending forever; the reconciler `sweep()` tryLock follow-up.
+Blocked: — (cf-reeve-application was stopped on 2026-11-05 to free memory. On 2026-11-06 Docker held no containers or volumes, cleared outside this work, so recreate it from its compose project.)
+Updated: 2026-11-06

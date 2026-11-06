@@ -22,28 +22,26 @@ NONCE_INVALID:           { tests: [RejectionMatrixE2ETest#rejects] }
 NONCE_NOT_IN_INPUTS:     { tests: [RejectionMatrixE2ETest#rejects] }
 NONCE_NOT_ON_CHAIN:      { tests: [RejectionMatrixE2ETest#rejects] }
 INPUT_NOT_AVAILABLE:     { tests: [RejectionMatrixE2ETest#rejects] }
-PHASE1_INVALID:          { tests: [RejectionMatrixE2ETest#rejects] }
+PHASE1_INVALID:          { tests: [RejectionMatrixE2ETest#rejects, ShapeMatrixE2ETest#shapes] }
 PHASE2_INVALID:          { tests: [RejectionMatrixE2ETest#rejects] }
 VALUE_NOT_CONSERVED:     { tests: [RejectionMatrixE2ETest#rejects] }
 FEE_BELOW_MINIMUM:       { tests: [RejectionMatrixE2ETest#rejects] }
 MIN_UTXO_INSUFFICIENT:   { tests: [RejectionMatrixE2ETest#rejects] }
 RECIPIENT_MISMATCH:      { tests: [RejectionMatrixE2ETest#rejects] }
 ASSET_MISMATCH:          { tests: [RejectionMatrixE2ETest#rejects] }
-AMOUNT_INSUFFICIENT:     { tests: [RejectionMatrixE2ETest#rejects] }
+AMOUNT_INSUFFICIENT:     { tests: [RejectionMatrixE2ETest#rejects, ShapeMatrixE2ETest#shapes] }
+
+# ---- asserted through shim faults (WP-13) ----
+INPUT_VALUE_UNAVAILABLE:          { tests: [ProviderFaultE2ETest#anInputWithoutACoinValueIsInputValueUnavailable] }
+SETTLEMENT_DEFINITIVELY_REJECTED: { tests: [ProviderFaultE2ETest#aLedgerRejectionIsDefinitiveAndStaysSoOnResettle] }
 
 # ---- excluded ----
 UNSUPPORTED_VERSION:
   excluded: unreachable-via-http
   reason: the registry is keyed by (x402Version, scheme, network), so a v1 payload is answered 500 before the scheme check (pinned in RoutesE2ETest#anUnsupportedVersionIs500)
-INPUT_VALUE_UNAVAILABLE:
-  excluded: provider-fault
-  reason: needs the chain API to return an unspent input without a coin value; a healthy Yano always reports it
 SETTLEMENT_FAILED:
   excluded: provider-fault
-  reason: NotSubmitted needs a provider that refuses before sending, and the "expired" path a submitted tx that never lands; neither occurs on a healthy devnet (expired is covered offline by ExactCardanoSettleTest)
-SETTLEMENT_DEFINITIVELY_REJECTED:
-  excluded: race-only
-  reason: needs a tx that passes verify and is then rejected by the ledger at submit (an input spent in between); Yano's rejection text is also not classified as Rejected (plan Unsure 3)
+  reason: NotSubmitted needs the submit-time network-identity or tip check to fail (BlockfrostChainService.submitTransaction), but verify makes the same /genesis and /blocks/latest calls and both reconcilers do every 30 s, so a fault on only the submit-time call is racy. The "expired" path is unreachable with a Blockfrost-compatible provider (NotSeen carries no watermark, InclusionResult.java:9); it is covered offline by ExactCardanoSettleTest
 SETTLEMENT_NOT_CONFIRMED:
   excluded: dead
   reason: declared, never returned by main

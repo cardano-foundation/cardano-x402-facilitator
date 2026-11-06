@@ -3,6 +3,7 @@ package org.cardanofoundation.x402.facilitator.e2e;
 import com.fasterxml.jackson.databind.JsonNode;
 import org.cardanofoundation.x402.facilitator.e2e.kit.DevnetKit;
 import org.cardanofoundation.x402.facilitator.e2e.kit.FacilitatorClient;
+import org.cardanofoundation.x402.facilitator.e2e.kit.Funding;
 import org.cardanofoundation.x402.facilitator.e2e.kit.Payment;
 import org.cardanofoundation.x402.facilitator.e2e.kit.PaymentFactory;
 import org.cardanofoundation.x402.facilitator.e2e.kit.SchemaAssert;
@@ -44,8 +45,8 @@ class RoutesE2ETest {
         payments = new PaymentFactory(kit);
         facilitator = FacilitatorClient.defaultInstance();
         mempoolFacilitator = FacilitatorClient.mempoolInstance();
-        payer = kit.newWallet(100);
-        receiver = kit.newWallet(5);
+        payer = Funding.wallet(100);
+        receiver = Funding.wallet(5);
     }
 
     // ---- protocol routes: one real payment, verified then settled ----

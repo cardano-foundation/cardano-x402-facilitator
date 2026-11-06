@@ -2,7 +2,7 @@
 // devnet, for every transfer method. Nothing here is hand-built: the resource
 // server issues the 402, the reference client signer builds and signs against
 // Yano, HTTPFacilitatorClient verifies and settles, and Yano — not the
-// facilitator — confirms the transaction. Run via e2e/run.sh --ts.
+// facilitator — confirms the transaction. Run via e2e/run.sh.
 import { before, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
@@ -16,7 +16,7 @@ import { decodeCardanoTransaction, toClientCardanoSigner, toMasumiSellerSigner }
 const NETWORK = "cardano:preview";
 const env = (name) => {
   const value = process.env[name];
-  if (!value) throw new Error(`${name} is not set — run through e2e/run.sh --ts`);
+  if (!value) throw new Error(`${name} is not set — run through e2e/run.sh`);
   return value.replace(/\/$/, "");
 };
 const FACILITATOR_URL = env("FACILITATOR_URL");

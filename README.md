@@ -95,7 +95,7 @@ Then prove it works against the real chain — build, sign, verify, settle, and
 independently confirm on-chain:
 
 ```bash
-BLOCKFROST_PROJECT_ID=preprod... ./gradlew e2e
+BLOCKFROST_PROJECT_ID=preprod... ./gradlew preprodE2e
 ```
 
 See [docs/testing.md](docs/testing.md) — including how to point it at your own
@@ -177,7 +177,7 @@ CORS remains opt-in. See [docs/configuration.md](docs/configuration.md).
 | [docs/verification.md](docs/verification.md) | What `/verify` checks, in order, and why |
 | [docs/architecture.md](docs/architecture.md) | Packages, chain SPI, settlement state machine, persistence |
 | [docs/configuration.md](docs/configuration.md) | Every property, defaults, and the ones that matter |
-| [docs/testing.md](docs/testing.md) | Unit suite and the on-chain E2E proof |
+| [docs/testing.md](docs/testing.md) | Unit suite, devnet E2E suite and the preprod proof |
 | [deploy/README.md](deploy/README.md) | Docker Compose, Mithril sync, mainnet checklist |
 
 ## Development
@@ -189,7 +189,8 @@ export JAVA_HOME=/Library/Java/JavaVirtualMachines/temurin-21.jdk/Contents/Home
 npm ci --prefix interop --ignore-scripts
 ./gradlew interop     # published TypeScript SDKs against real Java HTTP
 ./gradlew bootRun     # run locally
-./gradlew e2e         # on-chain proof; facilitator must be running
+./gradlew preprodE2e  # on-chain proof; facilitator must be running
+e2e/run.sh           # devnet E2E: boots the stack in Docker, runs the Java and TS suites
 ```
 
 Stack: Java 21 · Spring Boot 3.5.16 · cardano-client-lib 0.7.2 ·

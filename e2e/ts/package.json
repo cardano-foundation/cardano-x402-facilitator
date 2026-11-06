@@ -2,7 +2,7 @@
   "name": "cardano-x402-facilitator-e2e-ts",
   "private": true,
   "type": "module",
-  "description": "Devnet e2e: the published @x402 TypeScript SDK pays through the facilitator container. Run via e2e/run.sh --ts.",
+  "description": "Devnet e2e: the published @x402 TypeScript SDK pays through the facilitator container. Run via e2e/run.sh.",
   "engines": {
     "node": ">=22"
   },

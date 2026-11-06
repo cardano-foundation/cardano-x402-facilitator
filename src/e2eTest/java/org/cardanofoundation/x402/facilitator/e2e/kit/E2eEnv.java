@@ -53,7 +53,7 @@ public final class E2eEnv {
     private static String required(String name) {
         String value = System.getenv(name);
         if (value == null || value.isBlank()) {
-            throw new IllegalStateException(name + " is not set — run the suite through e2e/run.sh --java");
+            throw new IllegalStateException(name + " is not set — run the suite through e2e/run.sh");
         }
         return stripTrailingSlash(value);
     }

@@ -116,7 +116,9 @@ public class SettlementService {
                     : SettleResponse.pending(hash, network, verified.payer(), -1);
         }
         try {
-            InclusionResult evidence = chain.awaitInclusion(hash, depth, config.confirmationTimeout());
+            // Without operator opt-in, mempool sight is no answer for -1: wait for inclusion at depth 0.
+            int awaitDepth = config.acceptMempool() ? depth : Math.max(0, depth);
+            InclusionResult evidence = chain.awaitInclusion(hash, awaitDepth, config.confirmationTimeout());
             if (evidence instanceof InclusionResult.NotSeen) evidence = chain.checkInclusion(hash);
             return observe(repo.find(hash).orElse(submitted), evidence, depth, network, verified.payer(), false);
         } catch (RuntimeException e) {

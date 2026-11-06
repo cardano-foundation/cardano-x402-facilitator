@@ -4,3 +4,4 @@
 DUPLICATE_SETTLEMENT:
   tests:
     - SettlementSemanticsE2ETest#theSameTransactionUnderDifferentRequirementsIsADuplicate
+    - MasumiTermsConflictE2ETest#aSecondTransactionUnderAlreadyClaimedTermsIsADuplicateSettlement

@@ -26,7 +26,7 @@ public @interface StackRequired {
             List<String> missing = E2eEnv.missing();
             if (!missing.isEmpty()) {
                 throw new IllegalStateException("devnet stack env missing " + missing
-                        + " — run the suite through e2e/run.sh --java");
+                        + " — run the suite through e2e/run.sh");
             }
         }
     }

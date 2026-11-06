@@ -13,8 +13,8 @@ import org.cardanofoundation.x402.facilitator.e2e.kit.StackRequired;
 import org.cardanofoundation.x402.facilitator.e2e.kit.Wallet;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.parallel.Isolated;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -33,10 +33,10 @@ import static org.assertj.core.api.Assertions.assertThat;
  * refused with 503, and a journaled payment is answered pending — never
  * rebroadcast. After it returns, the facilitator recovers on its own.
  *
- * <p>Tagged {@code outage}: e2e/run.sh runs it alone, last, because a paused shim
- * would break every other test running at the same time.
+ * <p>{@code @Isolated}: JUnit runs it with no other test class running, because a
+ * paused shim would break every other test running at the same time.
  */
-@Tag("outage")
+@Isolated
 @StackRequired
 @Log4j2
 class ChainOutageE2ETest {
@@ -174,7 +174,7 @@ class ChainOutageE2ETest {
     private static String requiredEnv(String name) {
         String value = System.getenv(name);
         if (value == null || value.isBlank()) {
-            throw new IllegalStateException(name + " is not set — run the suite through e2e/run.sh --java");
+            throw new IllegalStateException(name + " is not set — run the suite through e2e/run.sh");
         }
         return value;
     }
