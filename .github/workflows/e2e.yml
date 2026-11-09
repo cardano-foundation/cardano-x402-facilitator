@@ -1,0 +1,67 @@
+name: E2E
+
+# The devnet e2e suite (docs/testing.md#devnet-e2e): e2e/run.sh boots the stack
+# and runs the Java e2eTest suite, then the TypeScript SDK suite. A plain
+# pass/fail check that gates nothing and uploads nothing; on a failure run.sh
+# prints the stack's log tails into the job log.
+on:
+  pull_request:
+    types: [ opened, synchronize, reopened ]
+  push:
+    branches:
+      - main
+
+# A new push to a pull request cancels its older run; pushes to main never cancel each other.
+concurrency:
+  group: e2e-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  e2e:
+    name: E2E (devnet)
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      E2E_IMAGE: x402-facilitator:e2e
+      # The images are built below; run.sh must not rebuild them.
+      E2E_SKIP_BUILD: '1'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: e2e/ts/package-lock.json
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build facilitator image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          tags: ${{ env.E2E_IMAGE }}
+          load: true
+          cache-from: type=gha,scope=facilitator
+          cache-to: type=gha,mode=max,scope=facilitator
+
+      # No layer cache: our layer on top of the official DevKit image is a few KB, and
+      # caching the multi-GB base could evict the facilitator's cache.
+      - name: Build devkit image
+        uses: docker/build-push-action@v6
+        with:
+          context: e2e/devnet
+          tags: x402-e2e-devkit:local
+          load: true
+
+      - name: Devnet e2e (Java e2eTest, then the TypeScript SDK suite)
+        run: e2e/run.sh

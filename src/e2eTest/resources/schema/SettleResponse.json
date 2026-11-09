@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "x402 v2 /settle response. transaction and network are always present: transaction is \"\" when nothing was submitted, else the 64-hex tx hash. The allOf rules mirror the SettleResponse factories: success means confirmed (confirmations >= 0) or mempool (confirmations -1); settlement_pending always carries pending evidence.",
+  "type": "object",
+  "required": ["success", "transaction", "network"],
+  "additionalProperties": false,
+  "properties": {
+    "success": { "type": "boolean" },
+    "errorReason": { "type": "string", "pattern": "^[a-z0-9_]+$" },
+    "errorMessage": { "type": "string" },
+    "payer": { "type": "string" },
+    "transaction": { "type": "string", "pattern": "^([0-9a-f]{64})?$" },
+    "network": { "type": "string", "pattern": "^cardano:[a-z]+$" },
+    "extra": {
+      "type": "object",
+      "required": ["status", "transactionId"],
+      "additionalProperties": false,
+      "properties": {
+        "status": { "enum": ["confirmed", "mempool", "pending", "expired"] },
+        "transactionId": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "confirmations": { "type": "integer", "minimum": -1 }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "status": { "const": "confirmed" } } },
+          "then": { "required": ["confirmations"], "properties": { "confirmations": { "minimum": 0 } } }
+        },
+        {
+          "if": { "properties": { "status": { "const": "mempool" } } },
+          "then": { "required": ["confirmations"], "properties": { "confirmations": { "const": -1 } } }
+        }
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "success": { "const": true } } },
+      "then": {
+        "required": ["payer", "extra"],
+        "not": { "anyOf": [{ "required": ["errorReason"] }, { "required": ["errorMessage"] }] },
+        "properties": {
+          "extra": { "properties": { "status": { "enum": ["confirmed", "mempool"] } } }
+        }
+      },
+      "else": { "required": ["errorReason"] }
+    },
+    {
+      "if": { "required": ["errorReason"], "properties": { "errorReason": { "const": "settlement_pending" } } },
+      "then": {
+        "required": ["extra"],
+        "properties": { "extra": { "properties": { "status": { "const": "pending" } } } }
+      }
+    },
+    {
+      "if": { "required": ["extra"] },
+      "then": { "properties": { "transaction": { "minLength": 64 } } }
+    }
+  ]
+}

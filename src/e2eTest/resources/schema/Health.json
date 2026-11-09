@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "GET /health (HealthController): 200 ok / 503 unavailable, with per-network detail.",
+  "type": "object",
+  "required": ["status", "networks"],
+  "additionalProperties": false,
+  "properties": {
+    "status": { "enum": ["ok", "unavailable"] },
+    "networks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "required", "healthy", "detail"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string", "pattern": "^cardano:[a-z]+$" },
+          "required": { "type": "boolean" },
+          "healthy": { "type": "boolean" },
+          "detail": { "type": "string" }
+        }
+      }
+    }
+  }
+}

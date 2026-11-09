@@ -1,0 +1,21 @@
+# Error codes asserted by WP-5 (script and Masumi methods), keyed by ErrorCodes constant name.
+# Merged and checked by ErrorCodeCoverageTest.
+SCRIPT_ADDRESS_MISMATCH: { tests: [ScriptTransferE2ETest#anAddressOtherThanTheDeclaredScriptsIsRejected] }
+SCRIPT_DATUM_MISSING:    { tests: [ScriptTransferE2ETest#aPlutusV1ScriptPaidWithAnInlineDatumIsRejected] }
+MASUMI_ESCROW_OUTPUT_COUNT: { tests: [MasumiTransferE2ETest#rejects] }
+MASUMI_AGENT_IDENTIFIER:    { tests: [MasumiTransferE2ETest#rejects] }
+MASUMI_DEPLOYMENT:          { tests: [MasumiTransferE2ETest#rejects] }
+MASUMI_CONTRACT_MISMATCH:   { tests: [MasumiTransferE2ETest#rejects] }
+MASUMI_DATUM_MISSING:       { tests: [MasumiTransferE2ETest#rejects] }
+MASUMI_DATUM_INVALID:       { tests: [MasumiTransferE2ETest#rejects] }
+MASUMI_DATUM_MISMATCH:      { tests: [MasumiTransferE2ETest#rejects] }
+MASUMI_DEADLINE:            { tests: [MasumiTransferE2ETest#rejects] }
+MASUMI_COLLATERAL:          { tests: [MasumiTransferE2ETest#rejects] }
+MASUMI_MIN_UTXO:            { tests: [MasumiTransferE2ETest#rejects] }
+MASUMI_REFERENCE_SCRIPT:    { tests: [MasumiTransferE2ETest#rejects] }
+MASUMI_ASSET:               { tests: [MasumiTransferE2ETest#rejects] }
+MASUMI_SCHEMA:              { tests: [MasumiTransferE2ETest#rejects] }
+MASUMI_IDENTIFIER:          { tests: [MasumiTransferE2ETest#rejects] }
+MASUMI_COMMITMENT:          { tests: [MasumiTransferE2ETest#rejects] }
+MASUMI_AUTHORIZATION:       { tests: [MasumiTransferE2ETest#rejects] }
+VERIFICATION_ERROR:         { tests: [MasumiTransferE2ETest#rejects] }

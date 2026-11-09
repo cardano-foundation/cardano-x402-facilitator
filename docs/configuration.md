@@ -282,6 +282,18 @@ index coverage through that slot. Terminal expiry additionally requires both
 the observed-through slot and current slot to exceed transaction TTL by 120
 slots. A block tip alone does not satisfy this proof.
 
+### Chain lookup concurrency
+
+These limits are fixed in code (`chain/LookupBudget`) and have no property. They cover verification's UTxO lookups and the provider network-identity check. Tip reads outside a verification session, and transaction, mempool and submit calls, run on the caller's own thread.
+
+- **Per lookup session** (for example, one verification): at most 64 provider calls, and 10 seconds for all of them together.
+- **Per instance:** these lookups share one pool of 8 `chain-lookup` threads. A provider that ignores cancellation can hold at most these 8 threads with them.
+- **When all 8 threads are busy:** a call waits in a queue of 64, but only for the rest of its session's 10-second budget.
+  - If no thread frees up in time, the call is cancelled and removed from the queue, and it never runs. The lookup fails closed, as before; verification, for example, answers `exact_cardano_facilitator_chain_lookup_failed`.
+  - A full queue fails the call at once.
+- **Network identity refresh:** when the 30-second identity cache expires, a request adds one more queued call for the refresh.
+- **Concurrent health checks never wait for an in-flight probe.** While one caller probes (and waits for its own lookups as before), concurrent `/health`, readiness and settle-gate checks answer from the last probe result. Before the very first probe completes, that result is DOWN.
+
 ## Environment variables (Compose)
 
 | Var | Default | Used by |
