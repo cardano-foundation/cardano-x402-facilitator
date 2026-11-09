@@ -19,11 +19,11 @@
   "customManagers": [
     {
       "customType": "regex",
-      "description": "The devnet's Yaci DevKit version (e2e/devnet/Dockerfile).",
+      "description": "The devnet's Yaci DevKit image tag (e2e/devnet/Dockerfile, FROM bloxbean/yaci-cli).",
       "managerFilePatterns": ["/^e2e/devnet/Dockerfile$/"],
       "matchStrings": ["ARG YACI_DEVKIT_VERSION=(?<currentValue>\\S+)"],
-      "depNameTemplate": "@bloxbean/yaci-devkit",
-      "datasourceTemplate": "npm"
+      "depNameTemplate": "bloxbean/yaci-cli",
+      "datasourceTemplate": "docker"
     }
   ]
 }

@@ -79,8 +79,7 @@ A black-box suite against the **container image** this repo ships. `e2e/run.sh`
 starts a [Yaci DevKit](https://github.com/bloxbean/yaci-devkit) devnet that poses
 as `cardano:preview` (protocol magic 2, 1 s slots), points two facilitator
 containers at it, and drives them over HTTP with real signed transactions. The
-`Build` workflow runs it on pull requests, on pushes to `main`, `develop`, `release/*` and version tags, on a
-nightly schedule and on manual dispatch (see [CI](#ci)).
+`E2E` workflow runs it on pull requests and on pushes to `main` (see [CI](#ci)).
 
 ### The two commands
 
@@ -125,7 +124,7 @@ Environment:
 
 | Variable | Effect |
 |---|---|
-| `E2E_SKIP_BUILD=1` | Do not build the facilitator and DevKit images (CI builds them with its layer cache; locally use it when the images are current). Without it `run.sh` always rebuilds, cheaply from cache |
+| `E2E_SKIP_BUILD=1` | Do not build the facilitator and DevKit images (CI builds them itself, the facilitator with the gha layer cache; locally use it when the images are current). Without it `run.sh` always rebuilds, cheaply from cache |
 | `E2E_LOAD_SCALE=pr\|nightly` | Size of `LoadE2ETest` (default `pr`); see [Load](#load-e2e_load_scale) |
 | `E2E_CANARY=1` | Build the newest DevKit (the resolved version is passed as a build-arg) and install the newest `@x402/cardano`, `@x402/core` and `@evolution-sdk/evolution` before the TS suite; prints the versions in use. `run.sh` resolves and builds the newest DevKit only when `E2E_SKIP_BUILD` is not `1`, so `E2E_CANARY=1 E2E_SKIP_BUILD=1` tests the pinned DevKit with the newest SDKs |
 | `E2E_IMAGE`, `E2E_COMPOSE_PROJECT` | Facilitator image tag (default `x402-facilitator:e2e`) and Compose project (`x402-e2e`) |
@@ -134,9 +133,9 @@ Environment:
 Requirements: Docker, Java 21, Node 22, python3, curl. Container logs land in
 `e2e/.out/logs/`, JUnit XML in `e2e/.out/junit/java/` (Java) and
 `e2e/.out/junit/ts.xml` (TS), the load summary in `e2e/.out/load/`. If a fresh
-DevKit dies while booting, `run.sh` fails within seconds and names the cause: the
-DevKit process tree is killed either by an out-of-memory condition or by a stale
-`yaci-cli.pid` (fixed in `e2e/devnet/entrypoint.sh`); a plain retry is safe.
+DevKit dies while booting, `run.sh` fails within seconds and names the cause from
+the container's state and log (exit code 137 means it was killed, most likely out
+of memory); a plain retry is safe.
 
 Timings (measured locally, not yet in CI): a full fresh run with
 `E2E_SKIP_BUILD=1` takes about 10 minutes, of which the Java suite is the
@@ -149,7 +148,7 @@ parallelised it (measured locally on 2026-11-05/06, before the chaos, fault and 
 
 | Service | What | Why |
 |---|---|---|
-| `devkit` | npm `@bloxbean/yaci-devkit` 0.12.0, `yano-only`, magic 2 | The ledger. Components are baked into the image (`e2e/devnet/prefetch.sh`) |
+| `devkit` | official `bloxbean/yaci-cli` 0.12.0 image, `yano-only`, magic 2 | The ledger. `e2e/devnet/Dockerfile` adds only the startup settings and a healthcheck (`healthcheck.sh`: genesis magic 2 and a tip at most 60 s old); multi-arch, so it runs natively on arm64 |
 | `shim` | `e2e/shim/yano_genesis_shim.py` in front of Yano | Blockfrost compatibility, a submit counter and opt-in [faults](#the-shim-fault-api) |
 | `postgres` | two databases | One journal per facilitator instance |
 | `facilitator` | the image, defaults | `accept-mempool=false` |
@@ -332,12 +331,12 @@ docstring of `e2e/shim/yano_genesis_shim.py`.
 invariants fail the test: every `success: true` hash is on chain (Yano, direct); no hash is broadcast more
 than once; a re-sent settled payment never broadcasts again; every on-chain hash reaches `CONFIRMED` after
 one reconciler sweep. Latency, the answer-code distribution and readiness flaps are **reported**, never
-asserted, in `e2e/.out/load/summary.md` and `summary.json` (CI uploads them as the `e2e-reports-<label>` artifact).
+asserted, in `e2e/.out/load/summary.md` and `summary.json` (local files; CI keeps no reports).
 
 | `E2E_LOAD_SCALE` | Settle mix | Verify burst concurrency | Used by |
 |---|---|---|---|
-| `pr` (default) | 20 payments | 1, 8, 32 | every run |
-| `nightly` | 300 payments | 1, 4, 8, 16, 32, 64, 128 | the scheduled `nightly` leg |
+| `pr` (default) | 20 payments | 1, 8, 32 | every run, including CI |
+| `nightly` | 300 payments | 1, 4, 8, 16, 32, 64, 128 | local runs on demand; CI never runs it |
 
 The mix is weighted `SETTLED` rows: default ADA, default native token, Masumi ADA and token locks, and the five
 positive shape rows. The verify burst runs against a slow, rate-limited shim (`latencyMs` 150, `ratePerSec` 10), so
@@ -355,35 +354,26 @@ The nightly scale funds about 300 wallets from one faucet top-up and takes about
 `E2E_CANARY=1` runs the suite against the newest DevKit and the newest `@x402/cardano`, `@x402/core` and
 `@evolution-sdk/evolution` (the pinned versions are in `e2e/devnet/Dockerfile` and
 `e2e/ts/package-lock.json`). It exists to learn about upstream breakage before Renovate's pull request does. A red
-canary is a signal to look, not to merge. Run it locally with `E2E_CANARY=1 e2e/run.sh` (it needs network access to npm). The newest DevKit is built only when `E2E_SKIP_BUILD` is not `1`: `E2E_CANARY=1 E2E_SKIP_BUILD=1 e2e/run.sh` tests the pinned DevKit with the newest SDKs. CI builds the canary DevKit itself, in the workflow's "Resolve the newest DevKit (canary)" and "Build devkit image" steps.
+canary is a signal to look, not to merge. It is a local option only; CI never runs it. Run it with `E2E_CANARY=1 e2e/run.sh` (it needs network access to npm and Docker Hub). The newest DevKit version comes from npm, and `run.sh` fails with a clear message if the official image has no `bloxbean/yaci-cli` tag for it yet. The newest DevKit is built only when `E2E_SKIP_BUILD` is not `1`: `E2E_CANARY=1 E2E_SKIP_BUILD=1 e2e/run.sh` tests the pinned DevKit with the newest SDKs.
 
 ### CI
 
-There is **one** workflow, `.github/workflows/build.yml` (workflow name `Build`), with three jobs:
+Two workflows:
 
-| Job | Runs | When |
-|---|---|---|
-| `verify` | `./gradlew test interop --rerun-tasks` (unit, Postgres IT, the coverage gates, TS interop) and the Compose network-render check | every trigger except `schedule` (pull requests, pushes, tags, manual dispatch) |
-| `e2e` | builds both images with the gha layer cache, then `e2e/run.sh`; check name `E2E (devnet, <label>)` | every trigger (the legs differ, below) |
-| `publish` | the image and Maven artifacts | only after **both** `verify` and `e2e` are green, on a push to `main` or a tag; never on a pull request, `schedule` or manual dispatch |
+| Workflow | Job | Runs | When |
+|---|---|---|---|
+| `Build` (`.github/workflows/build.yml`) | `verify` | `./gradlew test interop --rerun-tasks` (unit, Postgres IT, the coverage gates, TS interop) and the Compose network-render check | pull requests, pushes to `main`, `develop`, `release/*` and version tags, manual dispatch |
+| `Build` | `publish` | the image and Maven artifacts | after `verify`, on a push to `main` or a tag only |
+| `E2E` (`.github/workflows/e2e.yml`) | `E2E (devnet)` | builds both images, then `e2e/run.sh` at `E2E_LOAD_SCALE=pr` | pull requests and pushes to `main` |
 
-Triggers: `pull_request`, pushes to `main`, `develop`, `release/*` and version tags (not other branches), a nightly
-`schedule` (03:00 UTC) and `workflow_dispatch`. What runs where:
+- `E2E` is a plain pass/fail check. It does not gate `publish` and uploads no reports: on a failure, `run.sh`
+  prints the stack's log tails into the job log.
+- Only `publish` sees the registry secrets; the `E2E` job gets none.
+- The nightly load scale and the canary are local `run.sh` options; no workflow runs them.
 
-- **Pull request / push:** `verify` and one `e2e` leg, `E2E (devnet, pr)`, at `E2E_LOAD_SCALE=pr`.
-- **`schedule`:** `verify` is skipped (only `schedule` skips it) and `e2e` runs two legs, `E2E (devnet, nightly)`
-  at `E2E_LOAD_SCALE=nightly` (60 min timeout) and `E2E (devnet, canary)` with `E2E_CANARY=1` at load scale `pr`.
-  There is no `pr` leg on a schedule, and it never publishes.
-- **`workflow_dispatch`:** by default `verify` plus the `pr` leg. With the `nightly` input ticked, `verify` plus the
-  `nightly` and `canary` legs (and no `pr` leg). A dispatch never publishes.
-- A failing nightly or canary leg shows as a red `Build` run on `main`; nobody is blocked by it.
-- Only `publish` sees the registry secrets. The `e2e` job runs third-party code (the canary installs `@latest`
-  SDKs) and gets none.
-- Every `e2e` leg uploads `e2e-reports-<label>`: `e2e/.out/` (JUnit XML, container logs, `networks.yml`, the load
-  summary) and Gradle's test reports.
-
-Make `verify` and `E2E (devnet, pr)` required checks in branch protection once the workflow has a record of green
-runs; that is a repository setting, not part of this change.
+Make `verify` and `E2E (devnet)` required checks in branch protection once the workflows have a record of green
+runs; that is a repository setting, not part of this change. A required check protects merges only: a tag
+pushed on a commit whose post-merge `E2E` run failed still publishes.
 
 ### Known gaps
 
@@ -488,7 +478,7 @@ flow and much more, on every PR.
   so it isn't exercised end-to-end. The Devnet E2E suite runs the same
   `BlockfrostChainService` code path against Yano behind a compatibility shim —
   only the full stack's integration (and a real cardano-node ledger) is unproven.
-- **Mainnet and preprod in CI.** CI runs against the devnet only (the `schedule` legs are still the devnet); the preprod
+- **Mainnet and preprod in CI.** CI runs against the devnet only; the preprod
   proof (`./gradlew preprodE2e`) is manual. Nothing here has run against mainnet.
 
 ## Before committing

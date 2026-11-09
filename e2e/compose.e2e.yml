@@ -2,7 +2,7 @@
 # render NETWORKS_FILE from its live genesis start -> the rest), so do not
 # `docker compose up` everything at once by hand.
 #
-#   devkit               Yaci DevKit (npm, yano-only, magic 2) — poses as cardano:preview
+#   devkit               Yaci DevKit (official image + healthcheck, yano-only, magic 2) — poses as cardano:preview
 #   shim                 Blockfrost compat shim in front of Yano (see e2e/shim/)
 #   postgres             journals: database `postgres` and `facilitator_mempool`
 #   facilitator          image under test, default settings
@@ -14,7 +14,6 @@ services:
     build:
       context: devnet
     image: x402-e2e-devkit:local
-    platform: linux/amd64
     ports:
       - "127.0.0.1:${E2E_YANO_HTTP_PORT:-6060}:6060"
       - "127.0.0.1:${E2E_ADMIN_PORT:-10000}:10000"

@@ -1,13 +1,8 @@
 name: Build
 
-# One workflow for the whole pipeline (docs/testing.md):
-#   verify   ./gradlew test interop — unit tests, PostgreSQL Testcontainers, the
-#            e2e coverage gates and the TypeScript interop check; no devnet.
-#   e2e      e2e/run.sh — builds the facilitator and DevKit images, boots the
-#            devnet stack and runs the Java e2eTest suite and the TS SDK suite.
-#   publish  only after BOTH verify and e2e are green, on a push to main or a tag.
-# The nightly schedule runs e2e only: once at full load scale, once as a canary on
-# the newest @x402 SDK and DevKit. It never publishes.
+# verify: unit tests, PostgreSQL Testcontainers, the e2e coverage gates and the
+# TypeScript interop check (no devnet). publish: after verify, on a push to main
+# or a tag. The devnet e2e suite is its own workflow, e2e.yml.
 on:
   push:
     branches:
@@ -18,27 +13,10 @@ on:
       - '[0-9]+.[0-9]+.[0-9]+*'
   pull_request:
     types: [ opened, synchronize, reopened ]
-  schedule:
-    - cron: '0 3 * * *'
   workflow_dispatch:
-    inputs:
-      nightly:
-        description: Run the scheduled legs (full load scale + canary) instead of the PR leg
-        type: boolean
-        default: false
 
-# Only pull requests share a group (a new push to the PR cancels the old run).
-# Pushes and scheduled runs each get their own group, so a scheduled run can never
-# cancel a pending push to main — and with it that push's publish.
-concurrency:
-  group: build-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
-
-# Registry secrets live on the publish job only: the e2e job runs third-party code
-# (the canary installs the newest @x402 SDK) and must never see them.
 jobs:
   verify:
-    if: github.event_name != 'schedule'
     permissions:
       contents: read
     runs-on: ubuntu-latest
@@ -58,101 +36,14 @@ jobs:
       - name: Compose network rendering
         run: python3 deploy/test-network-config.py
 
-  e2e:
-    # A stable check name per leg ("E2E (devnet, pr)") for branch protection.
-    name: E2E (devnet, ${{ matrix.label }})
-    permissions:
-      contents: read
-    runs-on: ubuntu-latest
-    timeout-minutes: ${{ matrix.scale == 'nightly' && 60 || 45 }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include: ${{ fromJSON((github.event_name == 'schedule' || inputs.nightly)
-          && '[{"label":"nightly","scale":"nightly","canary":"0"},{"label":"canary","scale":"pr","canary":"1"}]'
-          || '[{"label":"pr","scale":"pr","canary":"0"}]') }}
-    env:
-      E2E_IMAGE: x402-facilitator:e2e
-      # The images are built below with the gha layer cache; run.sh must not rebuild them.
-      E2E_SKIP_BUILD: '1'
-      E2E_LOAD_SCALE: ${{ matrix.scale }}
-      E2E_CANARY: ${{ matrix.canary }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '21'
-          cache: gradle
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: npm
-          cache-dependency-path: e2e/ts/package-lock.json
-
-      - uses: docker/setup-buildx-action@v3
-
-      - name: Build facilitator image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          platforms: linux/amd64
-          tags: ${{ env.E2E_IMAGE }}
-          load: true
-          cache-from: type=gha,scope=facilitator
-          cache-to: type=gha,mode=max,scope=facilitator
-
-      # Canary only: a concrete version, so the cached `npm install` layer of an
-      # earlier build can never stand in for the newest DevKit.
-      - name: Resolve the newest DevKit (canary)
-        id: devkit
-        if: matrix.canary == '1'
-        # The assignment form fails the step under `bash -e` when npm view fails; an
-        # empty version would silently build the pinned DevKit and pass as a canary.
-        run: |
-          version="$(npm view @bloxbean/yaci-devkit version)"
-          [[ -n "$version" ]] || { echo "::error::could not resolve the newest @bloxbean/yaci-devkit"; exit 1; }
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-
-      - name: Build devkit image
-        uses: docker/build-push-action@v6
-        with:
-          context: e2e/devnet
-          platforms: linux/amd64
-          tags: x402-e2e-devkit:local
-          load: true
-          # Empty on non-canary legs: no build-arg at all, so the Dockerfile's pinned
-          # default applies (an empty YACI_DEVKIT_VERSION= would override it).
-          build-args: ${{ steps.devkit.outputs.version && format('YACI_DEVKIT_VERSION={0}', steps.devkit.outputs.version) || '' }}
-          # Separate scopes: the canary's newest-DevKit layers must not replace the
-          # pinned image's cache manifest that every PR build reads.
-          cache-from: type=gha,scope=devkit-${{ matrix.canary == '1' && 'canary' || 'pinned' }}
-          cache-to: type=gha,mode=max,scope=devkit-${{ matrix.canary == '1' && 'canary' || 'pinned' }}
-
-      - name: Devnet e2e (Java e2eTest, then the TypeScript SDK suite)
-        run: e2e/run.sh
-
-      - name: Upload test reports and stack logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: e2e-reports-${{ matrix.label }}
-          # e2e/.out: junit/{java,ts.xml}, logs/*, networks.yml, load/ (summary)
-          path: |
-            e2e/.out/
-            build/test-results/e2eTest/
-            build/reports/tests/e2eTest/
-          if-no-files-found: ignore
-
   publish:
-    needs: [ verify, e2e ]
+    needs: verify
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))
     permissions:
       contents: write
       packages: write
     runs-on: ubuntu-latest
+    # The registry secrets live on this job only.
     env:
       PRIVATE_DOCKER_REGISTRY_URL: ${{ secrets.GITLAB_DOCKER_REGISTRY_URL }}
       PRIVATE_DOCKER_REGISTRY_USER: Deploy-Token

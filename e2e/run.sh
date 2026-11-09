@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One-command devnet e2e run — locally and in CI (.github/workflows/build.yml).
+# One-command devnet e2e run — locally and in CI (.github/workflows/e2e.yml).
 #
 #   e2e/run.sh                      boot stack, ./gradlew e2eTest, TS suite, tear down
 #   e2e/run.sh --tests '*FooTest'   any other args are Gradle filters for e2eTest; TS suite skipped
@@ -10,7 +10,7 @@
 #
 # Env: E2E_IMAGE (facilitator image), E2E_COMPOSE_PROJECT, E2E_{YANO_HTTP,ADMIN,SHIM,FACILITATOR,
 # FACILITATOR_MEMPOOL}_PORT.
-#   E2E_SKIP_BUILD=1  skip the facilitator and DevKit image builds (CI builds them with its cache)
+#   E2E_SKIP_BUILD=1  skip the facilitator and DevKit image builds (CI builds them itself)
 #   E2E_CANARY=1      newest DevKit (resolved version as build-arg) and newest @x402/cardano,
 #                     @x402/core, @evolution-sdk/evolution; prints the versions in use
 #   E2E_LOAD_SCALE    is passed through to the Gradle test JVM (read by the load test)
@@ -74,17 +74,20 @@ ready() { curl -fsS "$1/actuator/health/readiness" | grep -q '"UP"'; }
 
 devkit_dead() {
   local why=
-  if [[ "$(cstate devkit '{{.State.Status}}')" == exited ]]; then why="container exited"
+  local code
+  if [[ "$(cstate devkit '{{.State.Status}}')" == exited ]]; then
+    code="$(cstate devkit '{{.State.ExitCode}}')"
+    why="container exited with code $code"
+    [[ "$code" == 137 ]] && why+=" (killed — likely out of memory)"
   elif [[ "$(cstate devkit '{{.State.Health.Status}}')" == unhealthy ]]; then why="container unhealthy"
-  elif compose exec -T devkit grep -q 'bootstrap failed' /tmp/devkit.log 2>/dev/null; then why="'bootstrap failed' in devkit.log"
-  elif compose exec -T devkit grep -q 'did not start within timeout' /tmp/devkit.log 2>/dev/null; then why="'did not start within timeout' in devkit.log"
-  # bash's job report ("... Killed yaci-devkit up") goes to the container log, not devkit.log.
-  # Process substitution, not a pipe: pipefail + SIGPIPE must not turn a match into a miss.
-  elif grep -qw 'Killed' < <(compose logs --no-color devkit 2>/dev/null); then why="DevKit's process tree was killed — out of memory, or a stale yaci-cli.pid; see e2e/devnet/entrypoint.sh"
+  # DevKit logs to the container log only. Process substitution, not a pipe:
+  # pipefail + SIGPIPE must not turn a match into a miss.
+  elif grep -q 'bootstrap failed' < <(compose logs --no-color devkit 2>/dev/null); then why="'bootstrap failed' in the devkit log"
+  elif grep -q 'did not start within timeout' < <(compose logs --no-color devkit 2>/dev/null); then why="'did not start within timeout' in the devkit log"
   fi
   [[ -z "$why" ]] && return 0
   printf '\n--- tail devkit ---\n' >&2
-  { compose exec -T devkit tail -n 40 /tmp/devkit.log || compose logs --no-color --tail 40 devkit; } >&2 2>&1 || true
+  compose logs --no-color --tail 40 devkit >&2 2>&1 || true
   fail "devkit failed to boot: $why"
 }
 
@@ -105,7 +108,7 @@ stack_dead() { devkit_dead; facilitators_dead; }
 
 cleanup() {
   local status=$?
-  # Logs are kept on every run (CI uploads them); the tails print only on failure.
+  # Logs are kept on every run in e2e/.out/logs; the tails print only on failure (all CI shows).
   mkdir -p "$OUT/logs"
   for svc in devkit shim postgres facilitator facilitator-mempool; do
     compose logs --no-color "$svc" >"$OUT/logs/$svc.log" 2>&1 || true
@@ -115,9 +118,8 @@ cleanup() {
     rm -rf "$OUT/junit/java"
     mkdir -p "$OUT/junit/java" && cp -R "$ROOT/build/test-results/e2eTest/." "$OUT/junit/java/" || true
   fi
-  compose exec -T devkit cat /tmp/devkit.log >"$OUT/logs/devkit-cli.log" 2>/dev/null || true
   if ((status != 0)); then
-    for svc in facilitator facilitator-mempool shim devkit-cli; do
+    for svc in facilitator facilitator-mempool shim devkit; do
       printf '\n--- tail %s ---\n' "$svc" >&2
       tail -n 40 "$OUT/logs/$svc.log" >&2 || true
     done
@@ -132,8 +134,9 @@ cleanup() {
 }
 
 mkdir -p "$OUT"
-# A run leaves no earlier JUnit XML, load summary or shape dumps behind to pass as its own.
-rm -rf "$OUT/junit/java" "$OUT/load" "$OUT/shapes"
+# A run leaves no earlier JUnit XML, load summary or shape dumps behind to pass as its own
+# (devkit-cli.log is from the old npm image, which no run writes any more).
+rm -rf "$OUT/junit/java" "$OUT/load" "$OUT/shapes" "$OUT/logs/devkit-cli.log"
 trap cleanup EXIT
 
 BOOT=1
@@ -163,9 +166,12 @@ if ((BOOT)); then
     docker build --platform linux/amd64 -t "$E2E_IMAGE" "$ROOT"
     devkit_args=()
     if [[ "${E2E_CANARY:-0}" == 1 ]]; then
-      # A concrete version: the string "latest" would hit the cached npm-install layer forever.
+      # A concrete version from npm (DevKit's release feed); the same tag must exist for the
+      # official image, which is published alongside it.
       devkit_version="$(npm view @bloxbean/yaci-devkit version)"
       [[ -n "$devkit_version" ]] || fail "could not resolve the newest @bloxbean/yaci-devkit version"
+      docker manifest inspect "bloxbean/yaci-cli:$devkit_version" >/dev/null 2>&1 \
+        || fail "newest DevKit is $devkit_version on npm, but bloxbean/yaci-cli:$devkit_version is not on Docker Hub"
       echo "canary: building DevKit $devkit_version"
       devkit_args=(--build-arg "YACI_DEVKIT_VERSION=$devkit_version")
     fi
@@ -199,7 +205,7 @@ if ((BOOT)); then
 fi
 echo "stack is up: facilitator=$FACILITATOR_URL mempool=$FACILITATOR_MEMPOOL_URL chain=$E2E_CHAIN_URL"
 if [[ "${E2E_CANARY:-0}" == 1 ]]; then
-  echo "canary: DevKit running: $(compose exec -T devkit node -p "require('/usr/local/lib/node_modules/@bloxbean/yaci-devkit/package.json').version" 2>/dev/null || echo unknown)"
+  echo "canary: DevKit running: $(compose exec -T devkit cat /app/version 2>/dev/null || echo unknown)"
   for pkg in @x402/cardano @x402/core @evolution-sdk/evolution; do
     echo "canary: newest $pkg $(npm view "$pkg" version 2>/dev/null || echo unknown)"
   done
