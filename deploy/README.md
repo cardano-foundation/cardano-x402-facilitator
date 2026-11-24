@@ -238,7 +238,7 @@ the custom-provider proof requirement.
 
 ## E2E credentials
 
-The optional `./gradlew e2e` proof requires `BLOCKFROST_PROJECT_ID` and
+The optional `./gradlew preprodE2e` proof requires `BLOCKFROST_PROJECT_ID` and
 `E2E_MNEMONIC` from the environment. The harness contains no credential
 fallbacks. Rotate any previously committed preprod project ID and mnemonic
 at their providers/wallet, since removing them from source does not revoke

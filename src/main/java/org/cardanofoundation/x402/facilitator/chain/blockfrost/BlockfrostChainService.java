@@ -28,6 +28,7 @@ import java.util.Map;
 import java.util.HashMap;
 import com.bloxbean.cardano.client.transaction.util.TransactionUtil;
 import java.util.List;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.regex.Pattern;
 
 /**
@@ -56,6 +57,7 @@ public class BlockfrostChainService implements FacilitatorChainService {
     private volatile long lastProbeNanos;
     private volatile boolean lastProbeOk;
     private volatile long lastProbeSlot = -1;
+    private final ReentrantLock probeLock = new ReentrantLock();
 
     private static final Pattern TX_HASH = Pattern.compile("^[0-9a-fA-F]{64}$");
     private static final Duration MEMPOOL_TIMEOUT = Duration.ofSeconds(10);
@@ -345,16 +347,13 @@ public class BlockfrostChainService implements FacilitatorChainService {
     @Override
     public BackendHealth health() {
         long now = System.nanoTime();
-        if (lastProbeNanos != 0 && now - lastProbeNanos < Duration.ofSeconds(5).toNanos()) {
-            if (!lastProbeOk) return BackendHealth.down("last Blockfrost probe failed");
-            if (networkClock != null) {
-                Duration age = Duration.between(networkClock.slotToTime(lastProbeSlot), wallClock.instant());
-                if (age.compareTo(maxTipAge) > 0 || age.compareTo(Duration.ofSeconds(-30)) < 0)
-                    return BackendHealth.down("Blockfrost tip is stale or ahead of wall clock");
-            }
-            return BackendHealth.ok();
-        }
-        synchronized (this) {
+        if (lastProbeNanos != 0 && now - lastProbeNanos < Duration.ofSeconds(5).toNanos()) return cachedHealth();
+        // One prober at a time, and nobody waits for it: the probe can queue on the lookup pool
+        // for up to its whole budget, and a waiting monitor would pin every virtual thread
+        // that blocks on it. Callers that lose the race answer from the last probe; before
+        // the first probe completes that is DOWN.
+        if (!probeLock.tryLock()) return cachedHealth();
+        try {
             now = System.nanoTime();
             if (lastProbeNanos == 0 || now - lastProbeNanos >= Duration.ofSeconds(5).toNanos()) {
                 try {
@@ -366,8 +365,20 @@ public class BlockfrostChainService implements FacilitatorChainService {
                 }
                 lastProbeNanos = now;
             }
+        } finally {
+            probeLock.unlock();
         }
         return lastProbeOk ? BackendHealth.ok()
                 : BackendHealth.down("Blockfrost unreachable, stale, or network identity mismatched");
+    }
+
+    private BackendHealth cachedHealth() {
+        if (!lastProbeOk) return BackendHealth.down("last Blockfrost probe failed");
+        if (networkClock != null) {
+            Duration age = Duration.between(networkClock.slotToTime(lastProbeSlot), wallClock.instant());
+            if (age.compareTo(maxTipAge) > 0 || age.compareTo(Duration.ofSeconds(-30)) < 0)
+                return BackendHealth.down("Blockfrost tip is stale or ahead of wall clock");
+        }
+        return BackendHealth.ok();
     }
 }

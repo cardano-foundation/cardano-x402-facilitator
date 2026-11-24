@@ -1,0 +1,59 @@
+# Error codes asserted by WP-4 (rejection matrix), plus the suite-wide exclusions.
+# Keyed by ErrorCodes constant NAME (two constants can share a value). Merged and
+# checked by ErrorCodeCoverageTest: each entry has `tests: [Class#method]` or
+# `excluded: <race-only|dead|provider-fault|unreachable-via-http|not-producible-on-healthy-devnet>`
+# plus a `reason`. Masumi/script codes are mapped in wp-5.yml, outage codes in wp-6.yml.
+
+# ---- asserted by the matrix ----
+UNSUPPORTED_SCHEME:      { tests: [RejectionMatrixE2ETest#rejects] }
+INVALID_PAYLOAD:         { tests: [RejectionMatrixE2ETest#rejects] }
+REQUIREMENTS_INVALID:    { tests: [RejectionMatrixE2ETest#rejects] }
+REQUIREMENTS_POLICY:     { tests: [RejectionMatrixE2ETest#rejects] }
+NETWORK_MISMATCH:        { tests: [RejectionMatrixE2ETest#rejects] }
+DECODE_FAILED:           { tests: [RejectionMatrixE2ETest#rejects] }
+NETWORK_ID_MISMATCH:     { tests: [RejectionMatrixE2ETest#rejects] }
+UNSIGNED:                { tests: [RejectionMatrixE2ETest#rejects] }
+INVALID_SIGNATURE:       { tests: [RejectionMatrixE2ETest#rejects] }
+PAYER_NOT_WITNESS:       { tests: [RejectionMatrixE2ETest#rejects] }
+TTL_EXPIRED:             { tests: [RejectionMatrixE2ETest#rejects] }
+TTL_TOO_FAR:             { tests: [RejectionMatrixE2ETest#rejects] }
+NOT_YET_VALID:           { tests: [RejectionMatrixE2ETest#rejects] }
+NONCE_INVALID:           { tests: [RejectionMatrixE2ETest#rejects] }
+NONCE_NOT_IN_INPUTS:     { tests: [RejectionMatrixE2ETest#rejects] }
+NONCE_NOT_ON_CHAIN:      { tests: [RejectionMatrixE2ETest#rejects] }
+INPUT_NOT_AVAILABLE:     { tests: [RejectionMatrixE2ETest#rejects] }
+PHASE1_INVALID:          { tests: [RejectionMatrixE2ETest#rejects, ShapeMatrixE2ETest#shapes] }
+PHASE2_INVALID:          { tests: [RejectionMatrixE2ETest#rejects] }
+VALUE_NOT_CONSERVED:     { tests: [RejectionMatrixE2ETest#rejects] }
+FEE_BELOW_MINIMUM:       { tests: [RejectionMatrixE2ETest#rejects] }
+MIN_UTXO_INSUFFICIENT:   { tests: [RejectionMatrixE2ETest#rejects] }
+RECIPIENT_MISMATCH:      { tests: [RejectionMatrixE2ETest#rejects] }
+ASSET_MISMATCH:          { tests: [RejectionMatrixE2ETest#rejects] }
+AMOUNT_INSUFFICIENT:     { tests: [RejectionMatrixE2ETest#rejects, ShapeMatrixE2ETest#shapes] }
+
+# ---- asserted through shim faults (WP-13) ----
+INPUT_VALUE_UNAVAILABLE:          { tests: [ProviderFaultE2ETest#anInputWithoutACoinValueIsInputValueUnavailable] }
+SETTLEMENT_DEFINITIVELY_REJECTED: { tests: [ProviderFaultE2ETest#aLedgerRejectionIsDefinitiveAndStaysSoOnResettle] }
+
+# ---- excluded ----
+UNSUPPORTED_VERSION:
+  excluded: unreachable-via-http
+  reason: the registry is keyed by (x402Version, scheme, network), so a v1 payload is answered 500 before the scheme check (pinned in RoutesE2ETest#anUnsupportedVersionIs500)
+SETTLEMENT_FAILED:
+  excluded: provider-fault
+  reason: NotSubmitted needs the submit-time network-identity or tip check to fail (BlockfrostChainService.submitTransaction), but verify makes the same /genesis and /blocks/latest calls and both reconcilers do every 30 s, so a fault on only the submit-time call is racy. The "expired" path is unreachable with a Blockfrost-compatible provider (NotSeen carries no watermark, InclusionResult.java:9); it is covered offline by ExactCardanoSettleTest
+SETTLEMENT_NOT_CONFIRMED:
+  excluded: dead
+  reason: declared, never returned by main
+SUBMISSION_MODE_MISMATCH:
+  excluded: dead
+  reason: declared for client submission, which main does not implement
+SUBMISSION_MODE_UNSUPPORTED:
+  excluded: dead
+  reason: declared for client submission, which main does not implement
+EVIDENCE_MISSING:
+  excluded: dead
+  reason: declared for client submission, which main does not implement
+CLIENT_SCRIPT_EXECUTION:
+  excluded: dead
+  reason: declared for client submission and never returned; it shares its string with PHASE2_INVALID, which the matrix asserts

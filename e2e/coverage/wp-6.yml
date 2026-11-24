@@ -1,0 +1,8 @@
+# Error codes asserted by WP-6 (chain outage), keyed by ErrorCodes constant name.
+# Merged and checked by ErrorCodeCoverageTest.
+CHAIN_LOOKUP_FAILED:
+  tests:
+    - ChainOutageE2ETest#anOutageDegradesAndRecovers
+SETTLEMENT_PENDING:
+  tests:
+    - ChainOutageE2ETest#anOutageDegradesAndRecovers

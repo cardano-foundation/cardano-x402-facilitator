@@ -9,6 +9,8 @@
 !gradle/**
 !src/
 !src/**
+# The image build runs only src/test classes; the devnet suite needs the stack.
+src/e2eTest/**
 
 # Keep local overrides and keys excluded even when placed inside an allowed tree.
 **/.env

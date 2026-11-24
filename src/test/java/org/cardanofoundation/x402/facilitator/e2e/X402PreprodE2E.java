@@ -38,7 +38,7 @@ import java.util.Map;
  * Credentials are supplied only through the environment. The harness is network-configurable
  * so the same class runs the yaci-devkit devnet E2E (E2E_NETWORK, E2E_BACKEND_URL).
  *
- * Run: BLOCKFROST_PROJECT_ID=... ./gradlew e2e   (facilitator must be running)
+ * Run: BLOCKFROST_PROJECT_ID=... ./gradlew preprodE2e   (facilitator must be running)
  */
 public class X402PreprodE2E {
 

@@ -53,7 +53,55 @@ dependencies {
     testImplementation 'org.testcontainers:junit-jupiter'
 }
 
-tasks.named('test') { useJUnitPlatform() }
+tasks.named('test') {
+    useJUnitPlatform()
+    // ErrorCodeCoverageTest reads these files. fileTree (not inputs.dir) because the
+    // image build runs this task with a context that excludes them (.dockerignore):
+    // a missing directory fails inputs.dir validation even when optional, but a
+    // fileTree over it is simply empty.
+    inputs.files(fileTree('e2e/coverage')).withPropertyName('coverageFragments')
+        .withPathSensitivity(PathSensitivity.RELATIVE)
+    inputs.files(fileTree('src/e2eTest/java')).withPropertyName('e2eSources')
+        .withPathSensitivity(PathSensitivity.RELATIVE)
+    inputs.files(fileTree('e2e/ts/test')).withPropertyName('tsTests')
+        .withPathSensitivity(PathSensitivity.RELATIVE)
+}
+
+// Black-box devnet suite: drives the facilitator CONTAINER over HTTP against a Yaci
+// DevKit devnet. Needs the stack from e2e/run.sh, so nothing (test, check, bootJar)
+// depends on it — run it through e2e/run.sh.
+sourceSets {
+    e2eTest {
+        compileClasspath += sourceSets.main.output + sourceSets.test.output
+        runtimeClasspath += sourceSets.main.output + sourceSets.test.output
+    }
+}
+
+configurations {
+    e2eTestImplementation.extendsFrom testImplementation
+    e2eTestRuntimeOnly.extendsFrom testRuntimeOnly
+}
+
+dependencies {
+    e2eTestCompileOnly 'org.projectlombok:lombok'
+    e2eTestAnnotationProcessor 'org.projectlombok:lombok'
+    e2eTestImplementation 'com.networknt:json-schema-validator:1.5.1'
+}
+
+tasks.register('e2eTest', Test) {
+    group = 'verification'
+    description = 'Runs the devnet e2e suite against a running stack (use e2e/run.sh)'
+    testClassesDirs = sourceSets.e2eTest.output.classesDirs
+    classpath = sourceSets.e2eTest.runtimeClasspath
+    useJUnitPlatform()
+    // The stack, not the sources, decides the outcome: never skip as up-to-date.
+    outputs.upToDateWhen { false }
+    shouldRunAfter tasks.named('test')
+    testLogging {
+        events 'passed', 'skipped', 'failed'
+        exceptionFormat 'full'
+    }
+}
 
 tasks.register('interop', JavaExec) {
     group = 'verification'
@@ -62,7 +110,7 @@ tasks.register('interop', JavaExec) {
     mainClass = 'org.cardanofoundation.x402.facilitator.interop.TypeScriptInterop'
 }
 
-tasks.register('e2e', JavaExec) {
+tasks.register('preprodE2e', JavaExec) {
     group = 'verification'
     description = 'Runs the preprod end-to-end proof (X402PreprodE2E main class)'
     classpath = sourceSets.test.runtimeClasspath

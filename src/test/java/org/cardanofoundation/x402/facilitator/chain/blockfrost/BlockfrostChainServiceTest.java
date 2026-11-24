@@ -15,6 +15,12 @@ import java.time.ZoneOffset;
 import java.time.ZoneId;
 import java.net.InetSocketAddress;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.lang.reflect.Field;
 import com.sun.net.httpserver.HttpServer;
 import org.cardanofoundation.x402.facilitator.chain.ShelleyNetworkClock;
 import org.cardanofoundation.x402.facilitator.chain.ChainLookupException;
@@ -249,6 +255,38 @@ class BlockfrostChainServiceTest {
         when(backend.getBlockService().getLatestBlock()).thenReturn(Result.success("").withValue(latest));
         assertThat(chain.health().healthy()).isTrue();
         verify(backend.getBlockService()).getLatestBlock();
+    }
+    @Test void concurrentHealthReturnsTheCachedResultWhileAProbeIsInFlight() throws Exception {
+        com.bloxbean.cardano.client.backend.model.Block latest = new com.bloxbean.cardano.client.backend.model.Block();
+        latest.setSlot(100L); latest.setHeight(100L);
+        CountDownLatch probing = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        when(backend.getBlockService().getLatestBlock())
+                .thenReturn(Result.success("").withValue(latest))
+                .thenAnswer(invocation -> {
+                    probing.countDown();
+                    release.await();
+                    return Result.success("").withValue(latest);
+                });
+        assertThat(chain.health().healthy()).as("first probe succeeds and is cached").isTrue();
+        // Age the cached probe past its 5 s freshness window, so the next call re-probes.
+        Field lastProbe = BlockfrostChainService.class.getDeclaredField("lastProbeNanos");
+        lastProbe.setAccessible(true);
+        lastProbe.setLong(chain, System.nanoTime() - Duration.ofSeconds(6).toNanos());
+        ExecutorService callers = Executors.newFixedThreadPool(2);
+        try {
+            Future<BackendHealth> reprobe = callers.submit(chain::health);
+            assertThat(probing.await(5, TimeUnit.SECONDS)).as("re-probe is blocked inside the provider call").isTrue();
+            Future<BackendHealth> concurrent = callers.submit(chain::health);
+            assertThat(concurrent.get(1, TimeUnit.SECONDS).healthy())
+                    .as("a concurrent caller answers at once from the cached probe").isTrue();
+            release.countDown();
+            assertThat(reprobe.get(5, TimeUnit.SECONDS).healthy()).isTrue();
+        } finally {
+            release.countDown();
+            callers.shutdownNow();
+            callers.awaitTermination(5, TimeUnit.SECONDS);
+        }
     }
     @Test void wrongHashIsUnknownNotAcceptance() throws Exception {
         when(backend.getTransactionService().submitTransaction(tx)).thenReturn(Result.success("").withValue("aa".repeat(32)));

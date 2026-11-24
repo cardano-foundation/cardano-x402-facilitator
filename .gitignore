@@ -109,3 +109,7 @@ nbdist/
 Thumbs.db
 ehthumbs.db
 desktop.ini
+
+# Devnet e2e runtime output
+e2e/.out/
+e2e/ts/node_modules/
